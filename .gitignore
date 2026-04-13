@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+Derived/
+__pycache__/
+TuistSpider.xcodeproj/
+TuistSpider.xcworkspace/
+exports/
+web/data/current-graph.json

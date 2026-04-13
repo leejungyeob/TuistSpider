@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TuistSpider</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="panel panel-left">
+        <p class="eyebrow">TuistSpider</p>
+        <h1>원하는 모듈만 골라 보는 Tuist 그래프 뷰어</h1>
+        <p class="intro">
+          `tuist graph` 결과에서 선택한 모듈 중심으로 관련된 노드만 다시 그립니다.
+        </p>
+
+        <div class="action-row">
+          <label class="upload-button">
+            <input id="graphFileInput" type="file" accept=".json,application/json" />
+            <span>그래프 JSON 불러오기</span>
+          </label>
+          <button id="loadBundledButton" class="secondary-button" type="button">현재 그래프</button>
+          <button id="loadSampleButton" class="secondary-button" type="button">샘플 보기</button>
+        </div>
+
+        <div class="action-row action-row-compact">
+          <button id="resetViewButton" class="secondary-button" type="button">뷰 초기화</button>
+          <p id="statusMessage" class="status-message">그래프를 준비하는 중입니다.</p>
+        </div>
+
+        <div class="control-stack">
+          <label class="field">
+            <span>모듈 검색</span>
+            <input id="moduleSearchInput" type="search" placeholder="Feature, Core, App..." />
+          </label>
+
+          <label class="field">
+            <span>방향</span>
+            <select id="directionSelect">
+              <option value="both">양방향</option>
+              <option value="dependencies">의존하는 쪽만</option>
+              <option value="dependents">의존받는 쪽만</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>깊이</span>
+            <select id="depthSelect">
+              <option value="1">1 단계</option>
+              <option value="2">2 단계</option>
+              <option value="3">3 단계</option>
+              <option value="all" selected>전체</option>
+            </select>
+          </label>
+
+          <label class="checkbox-field">
+            <input id="includeExternalCheckbox" type="checkbox" />
+            <span>외부 패키지/SDK 포함</span>
+          </label>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card">
+            <span class="stat-label">전체 노드</span>
+            <strong id="totalNodeCount">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">현재 서브그래프</span>
+            <strong id="visibleNodeCount">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">전체 간선</span>
+            <strong id="totalEdgeCount">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">현재 간선</span>
+            <strong id="visibleEdgeCount">0</strong>
+          </article>
+        </div>
+
+        <div class="module-list-header">
+          <span>모듈 목록</span>
+          <span id="filteredCountBadge" class="badge">0</span>
+        </div>
+        <div id="moduleList" class="module-list"></div>
+        <p class="footnote">JSON 파일을 이 창 아무 곳에나 드래그해서 바로 열 수 있습니다.</p>
+      </aside>
+
+      <main class="panel panel-main">
+        <div class="graph-header">
+          <div>
+            <p id="graphSourceLabel" class="eyebrow">Sample graph</p>
+            <h2 id="graphTitle">그래프를 불러오세요</h2>
+          </div>
+          <div class="graph-header-meta">
+            <p id="graphSummary" class="graph-summary"></p>
+            <p id="graphRootPath" class="graph-summary graph-root-path"></p>
+          </div>
+        </div>
+
+        <div class="graph-stage">
+          <svg id="graphSvg" viewBox="0 0 1200 760" aria-label="Dependency graph"></svg>
+          <div id="graphEmptyState" class="graph-empty-state">
+            불러온 그래프에서 모듈을 선택하면 관련된 노드만 표시됩니다.
+          </div>
+        </div>
+        <p class="graph-footnote">노드나 오른쪽 상세 리스트를 클릭하면 그 모듈 중심으로 다시 그립니다.</p>
+      </main>
+
+      <aside class="panel panel-right">
+        <div id="detailEmptyState" class="detail-empty-state">
+          왼쪽 목록에서 모듈을 선택하면 상세 정보를 보여줍니다.
+        </div>
+
+        <section id="detailPanel" class="detail-panel" hidden>
+          <p id="selectedKindLabel" class="eyebrow"></p>
+          <h2 id="selectedName"></h2>
+          <p id="selectedMeta" class="selected-meta"></p>
+
+          <div class="detail-card-grid">
+            <article class="detail-card">
+              <span>직접 의존</span>
+              <strong id="dependencyCount">0</strong>
+            </article>
+            <article class="detail-card">
+              <span>직접 역의존</span>
+              <strong id="dependentCount">0</strong>
+            </article>
+          </div>
+
+          <div class="detail-section">
+            <h3>직접 의존성</h3>
+            <div id="dependencyList" class="link-list"></div>
+          </div>
+
+          <div class="detail-section">
+            <h3>직접 역의존성</h3>
+            <div id="dependentList" class="link-list"></div>
+          </div>
+
+          <div class="detail-section">
+            <h3>메타데이터</h3>
+            <dl id="metadataList" class="metadata-list"></dl>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
