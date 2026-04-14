@@ -34,30 +34,30 @@
 
   <rect x="72" y="492" width="230" height="330" rx="22" fill="#E8EBF3"/>
   <rect x="88" y="516" width="198" height="58" rx="18" fill="#E7F0FF" stroke="#2F82FF" stroke-width="2"/>
-  <text x="106" y="547" fill="#1A243A" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="16" font-weight="700">HomeFeature</text>
+  <text x="106" y="547" fill="#1A243A" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="16" font-weight="700">AtlasApp</text>
   <rect x="88" y="590" width="198" height="50" rx="16" fill="#FFFFFF"/>
-  <text x="106" y="621" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">PippoFriendsInterface</text>
+  <text x="106" y="621" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">SignalKit</text>
   <rect x="88" y="654" width="198" height="50" rx="16" fill="#FFFFFF"/>
-  <text x="106" y="685" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">PlatformSupport</text>
+  <text x="106" y="685" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">SyncEngine</text>
   <rect x="88" y="718" width="198" height="50" rx="16" fill="#FFFFFF"/>
-  <text x="106" y="749" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">PlaygroundInterface</text>
+  <text x="106" y="749" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">RenderCore</text>
 
   <rect x="350" y="112" width="724" height="764" rx="20" fill="#121620"/>
   <text x="380" y="154" fill="#F6F8FC" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="28" font-weight="700">Focused Graph</text>
-  <text x="380" y="182" fill="#8E98AE" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="500">HomeFeature</text>
+  <text x="380" y="182" fill="#8E98AE" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="500">AtlasApp</text>
 
   <rect x="394" y="376" width="176" height="74" rx="22" fill="#1F2B43" stroke="#2F82FF" stroke-width="3"/>
-  <text x="422" y="407" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="20" font-weight="700">HomeFeature</text>
-  <text x="422" y="430" fill="#8AA6D3" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="13" font-weight="500">HomeFeature / staticFramework</text>
+  <text x="422" y="407" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="20" font-weight="700">AtlasApp</text>
+  <text x="422" y="430" fill="#8AA6D3" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="13" font-weight="500">AtlasApp / app</text>
 
   <rect x="648" y="206" width="224" height="72" rx="20" fill="#191F2B"/>
-  <text x="678" y="238" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">PippoFriendsInterface</text>
+  <text x="678" y="238" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">SignalKit</text>
   <rect x="652" y="332" width="220" height="72" rx="20" fill="#191F2B"/>
-  <text x="682" y="364" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">Networking</text>
+  <text x="682" y="364" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">SyncEngine</text>
   <rect x="652" y="456" width="220" height="72" rx="20" fill="#191F2B"/>
-  <text x="682" y="488" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">PlatformSupport</text>
+  <text x="682" y="488" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">RenderCore</text>
   <rect x="658" y="584" width="214" height="72" rx="20" fill="#191F2B"/>
-  <text x="688" y="616" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">OverlaySupport</text>
+  <text x="688" y="616" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">VaultStore</text>
 
   <rect x="928" y="270" width="116" height="300" rx="20" fill="#151A24"/>
   <rect x="952" y="316" width="70" height="42" rx="14" fill="#202634"/>
@@ -75,8 +75,8 @@
 
   <rect x="1094" y="112" width="302" height="764" rx="20" fill="#F3F5FA"/>
   <text x="1124" y="154" fill="#202636" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="22" font-weight="700">Inspector</text>
-  <text x="1124" y="196" fill="#202636" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="26" font-weight="700">HomeFeature</text>
-  <text x="1124" y="224" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="600">STATICFRAMEWORK</text>
+  <text x="1124" y="196" fill="#202636" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="26" font-weight="700">AtlasApp</text>
+  <text x="1124" y="224" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="600">APP</text>
 
   <rect x="1124" y="254" width="114" height="82" rx="18" fill="#FFFFFF"/>
   <text x="1144" y="288" fill="#2C3344" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="14" font-weight="700">Direct deps</text>
@@ -88,12 +88,12 @@
 
   <rect x="1124" y="362" width="240" height="92" rx="18" fill="#FFFFFF"/>
   <text x="1144" y="394" fill="#2B3243" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="16" font-weight="700">Direct dependencies</text>
-  <text x="1144" y="421" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">PippoFriendsInterface</text>
-  <text x="1144" y="443" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Networking</text>
+  <text x="1144" y="421" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">SignalKit</text>
+  <text x="1144" y="443" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">SyncEngine</text>
 
   <rect x="1124" y="476" width="240" height="122" rx="18" fill="#FFFFFF"/>
   <text x="1144" y="508" fill="#2B3243" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="16" font-weight="700">Metadata</text>
-  <text x="1144" y="535" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Project  HomeFeature</text>
+  <text x="1144" y="535" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Project  AtlasApp</text>
   <text x="1144" y="559" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Sources  12</text>
   <text x="1144" y="583" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Resources  3</text>
 </svg>

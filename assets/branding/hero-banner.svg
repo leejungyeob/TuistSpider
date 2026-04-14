@@ -88,7 +88,7 @@
     <rect x="770" y="192" width="108" height="390" rx="24" fill="#161A22"/>
     <rect x="786" y="214" width="74" height="12" rx="6" fill="#31384A"/>
     <rect x="786" y="245" width="78" height="54" rx="16" fill="#1F2B43" stroke="#2A8BFF" stroke-width="2"/>
-    <text x="798" y="267" fill="#E9F1FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="13" font-weight="700">HomeFeature</text>
+    <text x="798" y="267" fill="#E9F1FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="13" font-weight="700">Atlas</text>
     <text x="798" y="285" fill="#84A0C6" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="10" font-weight="500">focused node</text>
     <rect x="786" y="320" width="76" height="42" rx="14" fill="#202532"/>
     <rect x="786" y="378" width="76" height="42" rx="14" fill="#202532"/>
@@ -97,16 +97,16 @@
 
     <rect x="898" y="192" width="236" height="390" rx="24" fill="#131720"/>
     <rect x="926" y="230" width="152" height="62" rx="18" fill="#1D2433" stroke="#2A8BFF" stroke-width="2"/>
-    <text x="946" y="256" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="700">PippoFriendsInterface</text>
-    <text x="946" y="276" fill="#91A0B8" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="11" font-weight="500">PippoFeature / staticFramework</text>
+    <text x="946" y="256" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="700">SignalKit</text>
+    <text x="946" y="276" fill="#91A0B8" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="11" font-weight="500">Shared / framework</text>
 
     <rect x="932" y="336" width="152" height="62" rx="18" fill="#1B202B"/>
-    <text x="952" y="362" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="700">Networking</text>
-    <text x="952" y="382" fill="#91A0B8" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="11" font-weight="500">Networking / staticFramework</text>
+    <text x="952" y="362" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="700">SyncEngine</text>
+    <text x="952" y="382" fill="#91A0B8" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="11" font-weight="500">System / framework</text>
 
     <rect x="972" y="440" width="152" height="62" rx="18" fill="#1B202B"/>
-    <text x="992" y="466" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="700">KeyChainService</text>
-    <text x="992" y="486" fill="#91A0B8" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="11" font-weight="500">KeyChain / staticFramework</text>
+    <text x="992" y="466" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="700">VaultStore</text>
+    <text x="992" y="486" fill="#91A0B8" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="11" font-weight="500">Storage / framework</text>
 
     <path d="M863 272C888 272 894 261 922 261" stroke="url(#lineBlue)" stroke-width="6" stroke-linecap="round"/>
     <path d="M863 272C894 272 894 367 932 367" stroke="url(#lineMint)" stroke-width="6" stroke-linecap="round"/>
