@@ -1,11 +1,31 @@
 import AppKit
 import SwiftUI
 
+enum GraphPathPalette {
+    private static let colors: [Color] = [
+        Color(red: 0.16, green: 0.56, blue: 0.99),
+        Color(red: 0.12, green: 0.78, blue: 0.53),
+        Color(red: 1.0, green: 0.67, blue: 0.16),
+        Color(red: 0.92, green: 0.29, blue: 0.42),
+        Color(red: 0.58, green: 0.46, blue: 0.98),
+        Color(red: 0.0, green: 0.78, blue: 0.86),
+        Color(red: 0.95, green: 0.44, blue: 0.2),
+        Color(red: 0.73, green: 0.78, blue: 0.18)
+    ]
+
+    static func color(at index: Int) -> Color {
+        colors[index % colors.count]
+    }
+}
+
 struct GraphCanvasView: View {
     let subgraph: SpiderGraphSubgraph
     let presentationMode: GraphPresentationMode
-    let selectedNodeID: String?
+    let focusedNodeID: String?
+    let graphSelectedNodeID: String?
     let selectedLevel: Int
+    let connectionPaths: [SpiderGraphConnectionPath]
+    let hasConnectionPathContext: Bool
     @Binding var zoomScale: Double
 
     @GestureState private var gestureZoomScale: CGFloat = 1
@@ -23,6 +43,23 @@ struct GraphCanvasView: View {
 
     private var levelLayout: SpiderGraphLevelCanvasLayout {
         SpiderGraphLevelCanvasLayout.make(for: levelGroups)
+    }
+
+    private var activePathNodeIDs: Set<String> {
+        Set(connectionPaths.flatMap(\.nodeIDs))
+    }
+
+    private var edgeConnectionPaths: [String: [SpiderGraphConnectionPath]] {
+        Dictionary(
+            grouping: connectionPaths.flatMap { path in
+                path.edgeIDs.map { ($0, path) }
+            },
+            by: \.0
+        )
+        .mapValues { entries in
+            entries.map(\.1)
+                .sorted { lhs, rhs in lhs.paletteIndex < rhs.paletteIndex }
+        }
     }
 
     private var effectiveZoomScale: CGFloat {
@@ -84,13 +121,7 @@ struct GraphCanvasView: View {
         ZStack(alignment: .topLeading) {
             ForEach(subgraph.edges) { edge in
                 if let from = layout.nodeFrames[edge.from], let to = layout.nodeFrames[edge.to] {
-                    EdgeShape(from: from, to: to)
-                        .stroke(
-                            edge.from == selectedNodeID || edge.to == selectedNodeID
-                                ? Color.accentColor.opacity(0.55)
-                                : Color.secondary.opacity(0.22),
-                            style: StrokeStyle(lineWidth: edge.from == selectedNodeID || edge.to == selectedNodeID ? 3 : 2, lineCap: .round)
-                        )
+                    expandedEdgeView(edge: edge, from: from, to: to)
                 }
             }
 
@@ -98,7 +129,9 @@ struct GraphCanvasView: View {
                 if let frame = layout.nodeFrames[node.id] {
                     GraphNodeCard(
                         node: node,
-                        isSelected: node.id == selectedNodeID,
+                        isFocused: node.id == focusedNodeID,
+                        isGraphSelected: node.id == graphSelectedNodeID,
+                        isPathNode: activePathNodeIDs.contains(node.id),
                         action: { onSelect(node.id) }
                     )
                     .frame(width: frame.width, height: frame.height)
@@ -196,11 +229,71 @@ struct GraphCanvasView: View {
     private func clampZoomScale(_ value: Double) -> Double {
         min(max(value, TuistSpiderViewModel.zoomScaleRange.lowerBound), TuistSpiderViewModel.zoomScaleRange.upperBound)
     }
+
+    @ViewBuilder
+    private func expandedEdgeView(edge: SpiderGraphEdge, from: CGRect, to: CGRect) -> some View {
+        let matchingPaths = edgeConnectionPaths[edge.id] ?? []
+
+        ZStack {
+            EdgeShape(from: from, to: to)
+                .stroke(baseEdgeColor(for: edge, matchingPaths: matchingPaths), style: baseEdgeStrokeStyle(for: edge))
+
+            ForEach(Array(matchingPaths.enumerated()), id: \.element.id) { index, path in
+                EdgeShape(from: from, to: to)
+                    .stroke(
+                        GraphPathPalette.color(at: path.paletteIndex).opacity(0.98),
+                        style: highlightedEdgeStrokeStyle(rank: index, total: matchingPaths.count)
+                    )
+            }
+        }
+    }
+
+    private func baseEdgeColor(for edge: SpiderGraphEdge, matchingPaths: [SpiderGraphConnectionPath]) -> Color {
+        let isFocusedEdge = edge.from == focusedNodeID || edge.to == focusedNodeID
+        let isGraphSelectedEdge = edge.from == graphSelectedNodeID || edge.to == graphSelectedNodeID
+        let isOnVisiblePath = !matchingPaths.isEmpty
+
+        if hasConnectionPathContext {
+            if isOnVisiblePath {
+                return Color.white.opacity(0.14)
+            }
+            if isFocusedEdge || isGraphSelectedEdge {
+                return Color.secondary.opacity(0.14)
+            }
+            return Color.secondary.opacity(0.05)
+        }
+
+        if isFocusedEdge {
+            return Color.accentColor.opacity(0.45)
+        }
+        return Color.secondary.opacity(0.22)
+    }
+
+    private func baseEdgeStrokeStyle(for edge: SpiderGraphEdge) -> StrokeStyle {
+        let lineWidth: CGFloat
+        if hasConnectionPathContext {
+            lineWidth = edge.from == focusedNodeID || edge.to == focusedNodeID || edge.from == graphSelectedNodeID || edge.to == graphSelectedNodeID ? 2.5 : 1.5
+        } else if edge.from == focusedNodeID || edge.to == focusedNodeID {
+            lineWidth = 3
+        } else {
+            lineWidth = 2
+        }
+
+        return StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+    }
+
+    private func highlightedEdgeStrokeStyle(rank: Int, total: Int) -> StrokeStyle {
+        let outerWidth: CGFloat = total == 1 ? 4.5 : 4.5 + CGFloat(total - 1) * 2.25
+        let width = max(2.4, outerWidth - CGFloat(rank) * 2.25)
+        return StrokeStyle(lineWidth: width, lineCap: .round)
+    }
 }
 
 private struct GraphNodeCard: View {
     let node: SpiderGraphNode
-    let isSelected: Bool
+    let isFocused: Bool
+    let isGraphSelected: Bool
+    let isPathNode: Bool
     let action: () -> Void
 
     var body: some View {
@@ -222,7 +315,7 @@ private struct GraphNodeCard: View {
             .background(background)
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: isSelected ? 2 : 1)
+                    .strokeBorder(borderColor, lineWidth: borderWidth)
             )
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
@@ -230,8 +323,14 @@ private struct GraphNodeCard: View {
     }
 
     private var background: some ShapeStyle {
-        if isSelected {
+        if isGraphSelected {
+            return AnyShapeStyle(Color.accentColor.opacity(0.22))
+        }
+        if isFocused {
             return AnyShapeStyle(Color.accentColor.opacity(0.16))
+        }
+        if isPathNode {
+            return AnyShapeStyle(Color.accentColor.opacity(0.08))
         }
         if node.isExternal {
             return AnyShapeStyle(Color.orange.opacity(0.12))
@@ -240,9 +339,18 @@ private struct GraphNodeCard: View {
     }
 
     private var borderColor: Color {
-        if isSelected { return .accentColor.opacity(0.6) }
+        if isGraphSelected { return .accentColor.opacity(0.95) }
+        if isFocused { return .accentColor.opacity(0.6) }
+        if isPathNode { return .accentColor.opacity(0.28) }
         if node.isExternal { return .orange.opacity(0.35) }
         return .secondary.opacity(0.15)
+    }
+
+    private var borderWidth: CGFloat {
+        if isGraphSelected { return 2.5 }
+        if isFocused { return 2 }
+        if isPathNode { return 1.5 }
+        return 1
     }
 }
 

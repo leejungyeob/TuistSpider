@@ -6,22 +6,38 @@ final class TuistSpiderViewModel: ObservableObject {
     static let defaultZoomScale = 1.0
     static let zoomScaleRange: ClosedRange<Double> = 0.5...2.0
     static let zoomStep = 0.15
+    static let maxConnectionPaths = 12
+    static let connectionPathExtraHops = 3
 
     @Published private(set) var graph = SampleGraph.make()
     @Published var selectedNodeID: String? {
         didSet { persistPreferences() }
     }
+    @Published var graphSelectedNodeID: String?
+    @Published private var selectedConnectionPathIDs: Set<String>? = nil
     @Published var direction: GraphDirection = .both {
-        didSet { persistPreferences() }
+        didSet {
+            resetConnectionPathSelection()
+            persistPreferences()
+        }
     }
     @Published var depth: GraphDepth = .all {
-        didSet { persistPreferences() }
+        didSet {
+            resetConnectionPathSelection()
+            persistPreferences()
+        }
     }
     @Published var presentationMode: GraphPresentationMode = .expanded {
-        didSet { persistPreferences() }
+        didSet {
+            resetConnectionPathSelection()
+            persistPreferences()
+        }
     }
     @Published var includeExternal = false {
-        didSet { persistPreferences() }
+        didSet {
+            resetConnectionPathSelection()
+            persistPreferences()
+        }
     }
     @Published var searchText = "" {
         didSet { persistPreferences() }
@@ -72,6 +88,23 @@ final class TuistSpiderViewModel: ObservableObject {
         return graph.nodeMap[selectedNodeID]
     }
 
+    var graphSelectedNode: SpiderGraphNode? {
+        guard let visibleGraphSelectedNodeID else { return nil }
+        return graph.nodeMap[visibleGraphSelectedNodeID]
+    }
+
+    var visibleGraphSelectedNodeID: String? {
+        guard let graphSelectedNodeID else { return nil }
+        return visibleSubgraph.nodes.contains(where: { $0.id == graphSelectedNodeID }) ? graphSelectedNodeID : nil
+    }
+
+    var inspectedNode: SpiderGraphNode? {
+        if let visibleGraphSelectedNodeID {
+            return graph.nodeMap[visibleGraphSelectedNodeID]
+        }
+        return selectedNode
+    }
+
     var visibleSubgraph: SpiderGraphSubgraph {
         guard let selectedNodeID else {
             return SpiderGraphSubgraph(nodes: [], edges: [], levels: [:])
@@ -80,13 +113,68 @@ final class TuistSpiderViewModel: ObservableObject {
     }
 
     var directDependencies: [SpiderGraphNode] {
-        guard let selectedNodeID else { return [] }
-        return graph.directDependencies(of: selectedNodeID, includeExternal: includeExternal)
+        guard let inspectedNodeID = inspectedNode?.id else { return [] }
+        return graph.directDependencies(of: inspectedNodeID, includeExternal: includeExternal)
     }
 
     var directDependents: [SpiderGraphNode] {
-        guard let selectedNodeID else { return [] }
-        return graph.directDependents(of: selectedNodeID, includeExternal: includeExternal)
+        guard let inspectedNodeID = inspectedNode?.id else { return [] }
+        return graph.directDependents(of: inspectedNodeID, includeExternal: includeExternal)
+    }
+
+    private var connectionPathResult: SpiderGraphConnectionPathResult? {
+        guard
+            let focusedNodeID = selectedNodeID,
+            let graphSelectedNodeID = visibleGraphSelectedNodeID
+        else {
+            return nil
+        }
+        return visibleSubgraph.connectionPaths(
+            from: focusedNodeID,
+            to: graphSelectedNodeID,
+            maxPaths: Self.maxConnectionPaths,
+            maxExtraHops: Self.connectionPathExtraHops
+        )
+    }
+
+    var connectionPaths: [SpiderGraphConnectionPath] {
+        connectionPathResult?.paths ?? []
+    }
+
+    var hasTruncatedConnectionPaths: Bool {
+        connectionPathResult?.isTruncated == true
+    }
+
+    var activeConnectionPathIDs: Set<String> {
+        let availablePathIDs = Set(connectionPaths.map(\.id))
+        guard !availablePathIDs.isEmpty else { return [] }
+
+        guard let selectedConnectionPathIDs else {
+            return availablePathIDs
+        }
+
+        if selectedConnectionPathIDs.isEmpty {
+            return []
+        }
+
+        let intersected = selectedConnectionPathIDs.intersection(availablePathIDs)
+        return intersected.isEmpty ? availablePathIDs : intersected
+    }
+
+    var activeConnectionPaths: [SpiderGraphConnectionPath] {
+        connectionPaths.filter { activeConnectionPathIDs.contains($0.id) }
+    }
+
+    var activeConnectionPathNodeIDs: Set<String> {
+        Set(activeConnectionPaths.flatMap(\.nodeIDs))
+    }
+
+    var activeConnectionPathCount: Int {
+        activeConnectionPaths.count
+    }
+
+    func isConnectionPathVisible(_ pathID: String) -> Bool {
+        activeConnectionPathIDs.contains(pathID)
     }
 
     var visibleLevelGroups: [SpiderGraphLevelGroup] {
@@ -154,6 +242,8 @@ final class TuistSpiderViewModel: ObservableObject {
     func loadSample() {
         graph = SampleGraph.make()
         selectedNodeID = graph.preferredRootID
+        graphSelectedNodeID = nil
+        resetConnectionPathSelection()
         selectedLevel = 0
         currentProjectURL = nil
         currentJSONURL = nil
@@ -168,6 +258,8 @@ final class TuistSpiderViewModel: ObservableObject {
         includeExternal = false
         searchText = ""
         zoomScale = Self.defaultZoomScale
+        graphSelectedNodeID = nil
+        resetConnectionPathSelection()
         selectedLevel = 0
         selectedNodeID = graph.preferredRootID
         statusMessage = "뷰를 초기화했습니다."
@@ -175,11 +267,45 @@ final class TuistSpiderViewModel: ObservableObject {
 
     func selectNode(_ nodeID: String) {
         selectedNodeID = nodeID
+        graphSelectedNodeID = nil
+        resetConnectionPathSelection()
         selectedLevel = 0
+    }
+
+    func selectGraphNode(_ nodeID: String) {
+        guard nodeID != selectedNodeID else {
+            graphSelectedNodeID = nil
+            resetConnectionPathSelection()
+            return
+        }
+        graphSelectedNodeID = graphSelectedNodeID == nodeID ? nil : nodeID
+        resetConnectionPathSelection()
     }
 
     func selectLevel(_ level: Int) {
         selectedLevel = level
+    }
+
+    func showAllConnectionPaths() {
+        selectedConnectionPathIDs = nil
+    }
+
+    func hideAllConnectionPaths() {
+        selectedConnectionPathIDs = []
+    }
+
+    func toggleConnectionPath(_ pathID: String) {
+        let availablePathIDs = Set(connectionPaths.map(\.id))
+        guard availablePathIDs.contains(pathID) else { return }
+
+        var nextSelection = selectedConnectionPathIDs ?? availablePathIDs
+        if nextSelection.contains(pathID) {
+            nextSelection.remove(pathID)
+        } else {
+            nextSelection.insert(pathID)
+        }
+
+        selectedConnectionPathIDs = nextSelection == availablePathIDs ? nil : nextSelection
     }
 
     func setZoomScale(_ value: Double) {
@@ -262,6 +388,8 @@ final class TuistSpiderViewModel: ObservableObject {
         } else {
             self.selectedNodeID = graph.preferredRootID
         }
+        self.graphSelectedNodeID = nil
+        resetConnectionPathSelection()
         self.selectedLevel = 0
     }
 
@@ -302,6 +430,10 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private static func clampZoomScale(_ value: Double) -> Double {
         min(max(value, zoomScaleRange.lowerBound), zoomScaleRange.upperBound)
+    }
+
+    private func resetConnectionPathSelection() {
+        selectedConnectionPathIDs = nil
     }
 
     private enum PreferencesKey: String {

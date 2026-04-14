@@ -159,11 +159,14 @@ struct ContentView: View {
             GraphCanvasView(
                 subgraph: viewModel.visibleSubgraph,
                 presentationMode: viewModel.presentationMode,
-                selectedNodeID: viewModel.selectedNodeID,
+                focusedNodeID: viewModel.selectedNodeID,
+                graphSelectedNodeID: viewModel.visibleGraphSelectedNodeID,
                 selectedLevel: viewModel.selectedLevel,
+                connectionPaths: viewModel.activeConnectionPaths,
+                hasConnectionPathContext: viewModel.graphSelectedNode != nil && !viewModel.connectionPaths.isEmpty,
                 zoomScale: $viewModel.zoomScale,
                 onSelect: { nodeID in
-                    viewModel.selectNode(nodeID)
+                    viewModel.selectGraphNode(nodeID)
                 },
                 onSelectLevel: { level in
                     viewModel.selectLevel(level)
@@ -177,7 +180,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 18) {
                 if viewModel.presentationMode == .grouped, let levelGroup = viewModel.selectedLevelGroup {
                     groupedInspector(levelGroup: levelGroup)
-                } else if let node = viewModel.selectedNode {
+                } else if let node = viewModel.inspectedNode {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(node.name)
                             .font(.title3.weight(.bold))
@@ -188,6 +191,12 @@ struct ContentView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                    }
+
+                    if let focusedNode = viewModel.selectedNode,
+                       let targetNode = viewModel.graphSelectedNode,
+                       !viewModel.connectionPaths.isEmpty {
+                        connectionPathsSection(focusedNode: focusedNode, targetNode: targetNode)
                     }
 
                     HStack(spacing: 10) {
@@ -300,6 +309,77 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                 }
+            }
+        }
+    }
+
+    private func connectionPathsSection(focusedNode: SpiderGraphNode, targetNode: SpiderGraphNode) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("연결 경로")
+                    .font(.headline)
+                Spacer()
+                Text("\(viewModel.activeConnectionPathCount) / \(viewModel.connectionPaths.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("\(focusedNode.name) -> \(targetNode.name)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Button("전체 보기") {
+                    viewModel.showAllConnectionPaths()
+                }
+                .buttonStyle(.bordered)
+
+                Button("모두 숨김") {
+                    viewModel.hideAllConnectionPaths()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if viewModel.hasTruncatedConnectionPaths {
+                Text("경로가 많아 상위 \(TuistSpiderViewModel.maxConnectionPaths)개만 표시합니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(viewModel.connectionPaths) { path in
+                Button {
+                    viewModel.toggleConnectionPath(path.id)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(GraphPathPalette.color(at: path.paletteIndex))
+                            .frame(width: 10, height: 28)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("경로 \(path.paletteIndex + 1)")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Text("\(path.edgeCount) hops")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Text(path.preview(using: viewModel.graph.nodeMap))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(3)
+                        }
+
+                        Image(systemName: viewModel.isConnectionPathVisible(path.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(viewModel.isConnectionPathVisible(path.id) ? GraphPathPalette.color(at: path.paletteIndex) : .secondary)
+                    }
+                    .padding(12)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
             }
         }
     }
