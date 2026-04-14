@@ -1,6 +1,20 @@
 import AppKit
 import Foundation
 
+struct SpiderGraphLayerCatalogEntry: Identifiable, Hashable, Sendable {
+    let name: String
+    let nodeCount: Int
+
+    var id: String { name }
+}
+
+struct SpiderGraphLayerFilterOption: Identifiable, Hashable, Sendable {
+    let filter: SpiderGraphLayerFilter
+    let count: Int
+
+    var id: String { filter.id }
+}
+
 @MainActor
 final class TuistSpiderViewModel: ObservableObject {
     static let defaultZoomScale = 1.0
@@ -9,21 +23,27 @@ final class TuistSpiderViewModel: ObservableObject {
     static let defaultConnectionPathLimit = 12
     static let connectionPathLimitStep = 12
     static let connectionPathExtraHops = 3
+    static let unclassifiedLayerTitle = "Unclassified"
 
     @Published private(set) var graph = SampleGraph.make()
     @Published var selectedNodeID: String? {
-        didSet { persistPreferences() }
+        didSet {
+            guard !isRestoringPreferences else { return }
+            persistPreferences()
+        }
     }
     @Published var graphSelectedNodeID: String?
     @Published private var selectedConnectionPathIDs: Set<String>? = nil
     @Published var showOnlyActivePaths = false {
         didSet {
+            guard !isRestoringPreferences else { return }
             refreshDisplayedSubgraph()
             persistPreferences()
         }
     }
     @Published var direction: GraphDirection = .both {
         didSet {
+            guard !isRestoringPreferences else { return }
             resetConnectionPathState()
             alignDepthSelectionWithCurrentGraph()
             refreshDerivedState()
@@ -32,6 +52,7 @@ final class TuistSpiderViewModel: ObservableObject {
     }
     @Published var depth: GraphDepth = .all {
         didSet {
+            guard !isRestoringPreferences else { return }
             resetConnectionPathState()
             refreshDerivedState()
             persistPreferences()
@@ -39,12 +60,27 @@ final class TuistSpiderViewModel: ObservableObject {
     }
     @Published var presentationMode: GraphPresentationMode = .expanded {
         didSet {
+            guard !isRestoringPreferences else { return }
             resetConnectionPathState()
             persistPreferences()
         }
     }
     @Published var includeExternal = false {
         didSet {
+            guard !isRestoringPreferences else { return }
+            ensureSelectedNodeMatchesFilters()
+            resetConnectionPathState()
+            alignDepthSelectionWithCurrentGraph()
+            refreshDerivedState()
+            persistPreferences()
+        }
+    }
+    @Published var selectedLayerFilter: SpiderGraphLayerFilter = .all {
+        didSet {
+            guard !isRestoringPreferences else { return }
+            ensureSelectedLayerFilterIsAvailable()
+            ensureSelectedNodeMatchesFilters()
+            graphSelectedNodeID = nil
             resetConnectionPathState()
             alignDepthSelectionWithCurrentGraph()
             refreshDerivedState()
@@ -52,11 +88,15 @@ final class TuistSpiderViewModel: ObservableObject {
         }
     }
     @Published var searchText = "" {
-        didSet { persistPreferences() }
+        didSet {
+            guard !isRestoringPreferences else { return }
+            persistPreferences()
+        }
     }
     @Published var relatedNodeSearchText = ""
     @Published var zoomScale = TuistSpiderViewModel.defaultZoomScale {
         didSet {
+            guard !isRestoringPreferences else { return }
             let clamped = Self.clampZoomScale(zoomScale)
             if abs(clamped - zoomScale) > .ulpOfOne {
                 zoomScale = clamped
@@ -66,7 +106,10 @@ final class TuistSpiderViewModel: ObservableObject {
         }
     }
     @Published var selectedLevel = 0 {
-        didSet { persistPreferences() }
+        didSet {
+            guard !isRestoringPreferences else { return }
+            persistPreferences()
+        }
     }
     @Published private(set) var isLoading = false
     @Published private(set) var statusMessage = "샘플 그래프를 불러왔습니다."
@@ -86,30 +129,53 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private let exportService = TuistGraphExportService()
     private let preferences = UserDefaults.standard
+    private var isRestoringPreferences = false
 
     init() {
-        restorePreferences()
-        selectedNodeID = selectedNodeID ?? graph.preferredRootID
-        alignDepthSelectionWithCurrentGraph()
-        refreshDerivedState()
+        restorePreferences(for: graph)
         requestViewportCentering()
     }
 
     var filteredNodes: [SpiderGraphNode] {
         graph.nodes.filter { node in
-            if !includeExternal && node.isExternal {
-                return false
-            }
+            guard matchesNodeListFilters(node) else { return false }
             if searchText.isEmpty {
                 return true
             }
             let query = searchText.lowercased()
-            return node.name.lowercased().contains(query) || node.projectLabel.lowercased().contains(query)
+            return node.name.lowercased().contains(query)
+                || node.projectLabel.lowercased().contains(query)
+                || node.layerLabel.lowercased().contains(query)
         }
     }
 
     var availableDepthOptions: [GraphDepth] {
         availableDepthOptions(for: selectedNodeID)
+    }
+
+    var layerCatalog: [SpiderGraphLayerCatalogEntry] {
+        let internalNodes = graph.nodes.filter { !$0.isExternal }
+        let counts = Dictionary(grouping: internalNodes.compactMap(\.primaryLayer), by: { $0 })
+            .mapValues(\.count)
+
+        return counts.keys.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }.map { name in
+            SpiderGraphLayerCatalogEntry(name: name, nodeCount: counts[name] ?? 0)
+        }
+    }
+
+    var layerFilterOptions: [SpiderGraphLayerFilterOption] {
+        let internalNodes = graph.nodes.filter { !$0.isExternal }
+        let unclassifiedCount = internalNodes.filter { $0.primaryLayer == nil }.count
+        var options = [SpiderGraphLayerFilterOption(filter: .all, count: internalNodes.count)]
+        options.append(contentsOf: layerCatalog.map { entry in
+            SpiderGraphLayerFilterOption(filter: .layer(entry.name), count: entry.nodeCount)
+        })
+        if unclassifiedCount > 0 {
+            options.append(SpiderGraphLayerFilterOption(filter: .unclassified, count: unclassifiedCount))
+        }
+        return options
     }
 
     var filteredRelatedNodes: [SpiderGraphNode] {
@@ -120,7 +186,9 @@ final class TuistSpiderViewModel: ObservableObject {
         return visibleSubgraph.nodes
             .filter { node in
                 guard node.id != selectedNodeID else { return false }
-                return node.name.lowercased().contains(query) || node.projectLabel.lowercased().contains(query)
+                return node.name.lowercased().contains(query)
+                    || node.projectLabel.lowercased().contains(query)
+                    || node.layerLabel.lowercased().contains(query)
             }
             .sorted { lhs, rhs in
                 if lhs.name != rhs.name { return lhs.name < rhs.name }
@@ -261,7 +329,7 @@ final class TuistSpiderViewModel: ObservableObject {
         currentProjectURL = nil
         currentJSONURL = nil
         sourceLabel = "Sample graph / normalized-sample"
-        statusMessage = "샘플 그래프를 불러왔습니다."
+        statusMessage = loadStatusMessage(base: "샘플 그래프를 불러왔습니다.", for: graph)
     }
 
     func resetView() {
@@ -269,6 +337,7 @@ final class TuistSpiderViewModel: ObservableObject {
         depth = .all
         presentationMode = .expanded
         includeExternal = false
+        selectedLayerFilter = .all
         searchText = ""
         relatedNodeSearchText = ""
         zoomScale = Self.defaultZoomScale
@@ -409,6 +478,57 @@ final class TuistSpiderViewModel: ObservableObject {
         setZoomScale(Self.defaultZoomScale)
     }
 
+    func canEditLayerClassification(for node: SpiderGraphNode) -> Bool {
+        guard let rootURL = snapshotRootURL(for: graph) else { return false }
+        return ProjectLayerSnapshotStore.canPersist(node, rootURL: rootURL)
+    }
+
+    func availableLayerOptions(for node: SpiderGraphNode) -> [String] {
+        let names = Set(
+            graph.nodes.compactMap(\.primaryLayer)
+            + graph.nodes.compactMap(\.suggestedLayer)
+            + [node.primaryLayer, node.suggestedLayer].compactMap { $0 }
+        )
+
+        return names.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+    }
+
+    func applyLayerClassification(for nodeID: String, layerName: String?) {
+        guard
+            let node = graph.nodeMap[nodeID],
+            let rootURL = snapshotRootURL(for: graph),
+            ProjectLayerSnapshotStore.canPersist(node, rootURL: rootURL)
+        else {
+            return
+        }
+
+        let normalizedLayer = normalizedLayerName(layerName)
+        let updatedNode = node.updatingClassification(
+            primaryLayer: normalizedLayer,
+            layerSource: .projectSnapshot,
+            hasPersistedClassification: true
+        )
+        let updatedGraph = graph.replacingNodes(
+            graph.nodes.map { $0.id == nodeID ? updatedNode : $0 }
+        )
+
+        do {
+            try ProjectLayerSnapshotStore.syncSnapshot(for: updatedGraph, rootURL: rootURL)
+            applyUpdatedGraph(updatedGraph)
+            statusMessage = "레이어 분류를 저장했습니다."
+        } catch {
+            presentedError = .processFailed("레이어 분류를 저장하지 못했습니다. \(error.localizedDescription)")
+            statusMessage = "레이어 분류 저장에 실패했습니다."
+        }
+    }
+
+    func resetLayerClassificationToSuggested(for nodeID: String) {
+        guard let node = graph.nodeMap[nodeID] else { return }
+        applyLayerClassification(for: nodeID, layerName: node.suggestedLayer)
+    }
+
     private func loadProject(at url: URL) {
         isLoading = true
         statusMessage = "Tuist 그래프를 생성하는 중입니다..."
@@ -421,11 +541,16 @@ final class TuistSpiderViewModel: ObservableObject {
                     try service.loadFromProject(at: targetURL)
                 }.value
 
-                apply(graph: graph, resetViewport: true)
+                let resolvedGraph = prepareGraphForPresentation(
+                    graph,
+                    projectURL: targetURL,
+                    jsonURL: nil
+                )
+                apply(graph: resolvedGraph, resetViewport: true)
                 currentProjectURL = targetURL
                 currentJSONURL = nil
-                sourceLabel = "Tuist project / \(graph.sourceFormat)"
-                statusMessage = "프로젝트 그래프를 불러왔습니다."
+                sourceLabel = "Tuist project / \(resolvedGraph.sourceFormat)"
+                statusMessage = loadStatusMessage(base: "프로젝트 그래프를 불러왔습니다.", for: resolvedGraph)
                 preferences.set(targetURL.path, forKey: PreferencesKey.lastProjectPath.rawValue)
             } catch let error as SpiderGraphImportError {
                 presentedError = error
@@ -450,11 +575,16 @@ final class TuistSpiderViewModel: ObservableObject {
                     try service.loadFromJSONFile(at: targetURL)
                 }.value
 
-                apply(graph: graph, resetViewport: true)
+                let resolvedGraph = prepareGraphForPresentation(
+                    graph,
+                    projectURL: nil,
+                    jsonURL: targetURL
+                )
+                apply(graph: resolvedGraph, resetViewport: true)
                 currentProjectURL = nil
                 currentJSONURL = targetURL
-                sourceLabel = "JSON file / \(graph.sourceFormat)"
-                statusMessage = "JSON 그래프를 불러왔습니다."
+                sourceLabel = "JSON file / \(resolvedGraph.sourceFormat)"
+                statusMessage = loadStatusMessage(base: "JSON 그래프를 불러왔습니다.", for: resolvedGraph)
             } catch let error as SpiderGraphImportError {
                 presentedError = error
                 statusMessage = error.errorDescription ?? "그래프 로드에 실패했습니다."
@@ -468,61 +598,182 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private func apply(graph: SpiderGraph, resetViewport: Bool = false) {
         self.graph = graph
-        self.selectedNodeID = graph.preferredRootID
+        restorePreferences(for: graph)
         self.graphSelectedNodeID = nil
         self.relatedNodeSearchText = ""
         resetConnectionPathState()
-        self.selectedLevel = 0
-        alignDepthSelectionWithCurrentGraph()
         refreshDerivedState()
         requestViewportCentering()
 
-        if resetViewport {
+        if resetViewport && !hasScopedPreference(for: .zoomScale, scopeID: preferenceScopeID(for: graph)) {
             self.zoomScale = Self.defaultZoomScale
         }
+
+        persistPreferences()
     }
 
-    private func restorePreferences() {
-        if let rawDirection = preferences.string(forKey: PreferencesKey.direction.rawValue),
+    private func applyUpdatedGraph(_ updatedGraph: SpiderGraph) {
+        graph = updatedGraph
+        ensureSelectedLayerFilterIsAvailable()
+        ensureSelectedNodeMatchesFilters()
+        resetConnectionPathState()
+        alignDepthSelectionWithCurrentGraph()
+        refreshDerivedState()
+        persistPreferences()
+    }
+
+    private func prepareGraphForPresentation(
+        _ graph: SpiderGraph,
+        projectURL: URL?,
+        jsonURL: URL?
+    ) -> SpiderGraph {
+        guard let rootURL = snapshotRootURL(for: graph, projectURL: projectURL, jsonURL: jsonURL) else {
+            return graph
+        }
+
+        var preparedGraph = graph
+        var warnings: [String] = []
+        var didFailLoadingSnapshot = false
+
+        do {
+            if let snapshot = try ProjectLayerSnapshotStore.load(rootURL: rootURL) {
+                preparedGraph = ProjectLayerSnapshotStore.apply(snapshot, to: preparedGraph, rootURL: rootURL)
+            }
+        } catch {
+            didFailLoadingSnapshot = true
+            warnings.append("레이어 스냅샷을 읽지 못해 자동 분류 결과를 사용합니다. \(error.localizedDescription)")
+        }
+
+        if !didFailLoadingSnapshot {
+            do {
+                _ = try ProjectLayerSnapshotStore.syncSnapshot(for: preparedGraph, rootURL: rootURL)
+            } catch {
+                warnings.append("레이어 스냅샷을 저장하지 못했습니다. \(error.localizedDescription)")
+            }
+        }
+
+        return preparedGraph.appendingWarnings(warnings)
+    }
+
+    private func restorePreferences(for graph: SpiderGraph) {
+        let scopeID = preferenceScopeID(for: graph)
+        isRestoringPreferences = true
+        defer { isRestoringPreferences = false }
+
+        if let rawDirection = preferences.string(forKey: scopedPreferenceKey(.direction, scopeID: scopeID)),
            let direction = GraphDirection(rawValue: rawDirection) {
             self.direction = direction
+        } else {
+            self.direction = .both
         }
-        if let rawDepth = preferences.string(forKey: PreferencesKey.depth.rawValue),
+        if let rawDepth = preferences.string(forKey: scopedPreferenceKey(.depth, scopeID: scopeID)),
            let depth = GraphDepth(rawValue: rawDepth) {
             self.depth = depth
+        } else {
+            self.depth = .all
         }
-        if let rawPresentationMode = preferences.string(forKey: PreferencesKey.presentationMode.rawValue),
+        if let rawPresentationMode = preferences.string(forKey: scopedPreferenceKey(.presentationMode, scopeID: scopeID)),
            let presentationMode = GraphPresentationMode(rawValue: rawPresentationMode) {
             self.presentationMode = presentationMode
+        } else {
+            self.presentationMode = .expanded
         }
-        if preferences.object(forKey: PreferencesKey.showOnlyActivePaths.rawValue) != nil {
-            self.showOnlyActivePaths = preferences.bool(forKey: PreferencesKey.showOnlyActivePaths.rawValue)
-        }
-        self.includeExternal = preferences.bool(forKey: PreferencesKey.includeExternal.rawValue)
-        self.searchText = preferences.string(forKey: PreferencesKey.searchText.rawValue) ?? ""
-        self.selectedNodeID = preferences.string(forKey: PreferencesKey.selectedNodeID.rawValue)
-        if preferences.object(forKey: PreferencesKey.selectedLevel.rawValue) != nil {
-            self.selectedLevel = preferences.integer(forKey: PreferencesKey.selectedLevel.rawValue)
-        }
-        if preferences.object(forKey: PreferencesKey.zoomScale.rawValue) != nil {
-            self.zoomScale = Self.clampZoomScale(preferences.double(forKey: PreferencesKey.zoomScale.rawValue))
-        }
+
+        self.showOnlyActivePaths = hasScopedPreference(for: .showOnlyActivePaths, scopeID: scopeID)
+            ? preferences.bool(forKey: scopedPreferenceKey(.showOnlyActivePaths, scopeID: scopeID))
+            : false
+        self.includeExternal = hasScopedPreference(for: .includeExternal, scopeID: scopeID)
+            ? preferences.bool(forKey: scopedPreferenceKey(.includeExternal, scopeID: scopeID))
+            : false
+        self.searchText = preferences.string(forKey: scopedPreferenceKey(.searchText, scopeID: scopeID)) ?? ""
+        self.selectedLayerFilter = preferences.string(forKey: scopedPreferenceKey(.selectedLayerFilter, scopeID: scopeID))
+            .flatMap(SpiderGraphLayerFilter.init(persistedValue:))
+            ?? .all
+        self.selectedNodeID = preferences.string(forKey: scopedPreferenceKey(.selectedNodeID, scopeID: scopeID))
+        self.selectedLevel = hasScopedPreference(for: .selectedLevel, scopeID: scopeID)
+            ? preferences.integer(forKey: scopedPreferenceKey(.selectedLevel, scopeID: scopeID))
+            : 0
+        self.zoomScale = hasScopedPreference(for: .zoomScale, scopeID: scopeID)
+            ? Self.clampZoomScale(preferences.double(forKey: scopedPreferenceKey(.zoomScale, scopeID: scopeID)))
+            : Self.defaultZoomScale
+
+        ensureSelectedLayerFilterIsAvailable()
+        ensureSelectedNodeMatchesFilters()
+        alignDepthSelectionWithCurrentGraph()
     }
 
     private func persistPreferences() {
-        preferences.set(direction.rawValue, forKey: PreferencesKey.direction.rawValue)
-        preferences.set(depth.rawValue, forKey: PreferencesKey.depth.rawValue)
-        preferences.set(presentationMode.rawValue, forKey: PreferencesKey.presentationMode.rawValue)
-        preferences.set(showOnlyActivePaths, forKey: PreferencesKey.showOnlyActivePaths.rawValue)
-        preferences.set(includeExternal, forKey: PreferencesKey.includeExternal.rawValue)
-        preferences.set(searchText, forKey: PreferencesKey.searchText.rawValue)
-        preferences.set(selectedNodeID, forKey: PreferencesKey.selectedNodeID.rawValue)
-        preferences.set(selectedLevel, forKey: PreferencesKey.selectedLevel.rawValue)
-        preferences.set(zoomScale, forKey: PreferencesKey.zoomScale.rawValue)
+        let scopeID = preferenceScopeID(for: graph)
+        preferences.set(direction.rawValue, forKey: scopedPreferenceKey(.direction, scopeID: scopeID))
+        preferences.set(depth.rawValue, forKey: scopedPreferenceKey(.depth, scopeID: scopeID))
+        preferences.set(presentationMode.rawValue, forKey: scopedPreferenceKey(.presentationMode, scopeID: scopeID))
+        preferences.set(showOnlyActivePaths, forKey: scopedPreferenceKey(.showOnlyActivePaths, scopeID: scopeID))
+        preferences.set(includeExternal, forKey: scopedPreferenceKey(.includeExternal, scopeID: scopeID))
+        preferences.set(searchText, forKey: scopedPreferenceKey(.searchText, scopeID: scopeID))
+        preferences.set(selectedLayerFilter.persistedValue, forKey: scopedPreferenceKey(.selectedLayerFilter, scopeID: scopeID))
+        preferences.set(selectedNodeID, forKey: scopedPreferenceKey(.selectedNodeID, scopeID: scopeID))
+        preferences.set(selectedLevel, forKey: scopedPreferenceKey(.selectedLevel, scopeID: scopeID))
+        preferences.set(zoomScale, forKey: scopedPreferenceKey(.zoomScale, scopeID: scopeID))
     }
 
     private static func clampZoomScale(_ value: Double) -> Double {
         min(max(value, zoomScaleRange.lowerBound), zoomScaleRange.upperBound)
+    }
+
+    private func loadStatusMessage(base: String, for graph: SpiderGraph) -> String {
+        guard !graph.warnings.isEmpty else { return base }
+        return "\(base) 레이어 경고 \(graph.warnings.count)건이 있습니다."
+    }
+
+    private func snapshotRootURL(for graph: SpiderGraph) -> URL? {
+        snapshotRootURL(for: graph, projectURL: currentProjectURL, jsonURL: currentJSONURL)
+    }
+
+    private func snapshotRootURL(
+        for graph: SpiderGraph,
+        projectURL: URL?,
+        jsonURL: URL?
+    ) -> URL? {
+        if let projectURL {
+            return projectURL.standardizedFileURL
+        }
+
+        if let rootPath = graph.rootPath {
+            let candidateURL: URL
+            if let jsonURL {
+                candidateURL = URL(fileURLWithPath: rootPath, relativeTo: jsonURL.deletingLastPathComponent()).standardizedFileURL
+            } else {
+                candidateURL = URL(fileURLWithPath: rootPath).standardizedFileURL
+            }
+
+            if FileManager.default.fileExists(atPath: candidateURL.path) {
+                return candidateURL
+            }
+        }
+
+        if let jsonURL {
+            return jsonURL.deletingLastPathComponent().standardizedFileURL
+        }
+
+        return nil
+    }
+
+    private func normalizedLayerName(_ layerName: String?) -> String? {
+        guard let layerName else { return nil }
+        let trimmed = layerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func preferenceScopeID(for graph: SpiderGraph) -> String {
+        graph.rootPath ?? "graph::\(graph.sourceFormat)::\(graph.graphName)"
+    }
+
+    private func scopedPreferenceKey(_ key: PreferencesKey, scopeID: String) -> String {
+        "graphPreferences::\(scopeID)::\(key.rawValue)"
+    }
+
+    private func hasScopedPreference(for key: PreferencesKey, scopeID: String) -> Bool {
+        preferences.object(forKey: scopedPreferenceKey(key, scopeID: scopeID)) != nil
     }
 
     private func resetConnectionPathState() {
@@ -546,7 +797,8 @@ final class TuistSpiderViewModel: ObservableObject {
             centeredOn: selectedNodeID,
             direction: direction,
             depth: depth,
-            includeExternal: includeExternal
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
         )
 
         if let graphSelectedNodeID, !visibleSubgraph.nodeIDs.contains(graphSelectedNodeID) {
@@ -565,7 +817,8 @@ final class TuistSpiderViewModel: ObservableObject {
         let maxDepth = graph.maxReachableDepth(
             centeredOn: nodeID,
             direction: direction,
-            includeExternal: includeExternal
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
         )
         guard maxDepth > 0 else { return [.all] }
         return (1...maxDepth).map { GraphDepth(maxDepth: $0) } + [.all]
@@ -585,8 +838,16 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private func refreshInspectorState() {
         if let inspectedNodeID = inspectedNode?.id {
-            directDependencies = graph.directDependencies(of: inspectedNodeID, includeExternal: includeExternal)
-            directDependents = graph.directDependents(of: inspectedNodeID, includeExternal: includeExternal)
+            directDependencies = graph.directDependencies(
+                of: inspectedNodeID,
+                includeExternal: includeExternal,
+                layerFilter: selectedLayerFilter
+            )
+            directDependents = graph.directDependents(
+                of: inspectedNodeID,
+                includeExternal: includeExternal,
+                layerFilter: selectedLayerFilter
+            )
         } else {
             directDependencies = []
             directDependents = []
@@ -639,6 +900,30 @@ final class TuistSpiderViewModel: ObservableObject {
         viewportCenterRequestID &+= 1
     }
 
+    private func matchesNodeListFilters(_ node: SpiderGraphNode) -> Bool {
+        guard includeExternal || !node.isExternal else { return false }
+        return selectedLayerFilter.matches(node)
+    }
+
+    private func ensureSelectedLayerFilterIsAvailable() {
+        guard layerFilterOptions.contains(where: { $0.filter == selectedLayerFilter }) else {
+            selectedLayerFilter = .all
+            return
+        }
+    }
+
+    private func ensureSelectedNodeMatchesFilters() {
+        if let selectedNodeID,
+           let node = graph.nodeMap[selectedNodeID],
+           matchesNodeListFilters(node) {
+            return
+        }
+
+        selectedNodeID = graph.nodes.first(where: matchesNodeListFilters)?.id
+            ?? graph.preferredRootID
+            ?? graph.nodes.first?.id
+    }
+
     private enum PreferencesKey: String {
         case direction
         case depth
@@ -646,6 +931,7 @@ final class TuistSpiderViewModel: ObservableObject {
         case showOnlyActivePaths
         case includeExternal
         case searchText
+        case selectedLayerFilter
         case selectedNodeID
         case selectedLevel
         case lastProjectPath
@@ -673,6 +959,8 @@ private enum SampleGraph {
                     isExternal: false,
                     sourceCount: 1,
                     resourceCount: 0,
+                    primaryLayer: nil,
+                    layerSource: nil,
                     metadataTags: []
                 ),
                 SpiderGraphNode(
@@ -687,7 +975,11 @@ private enum SampleGraph {
                     isExternal: false,
                     sourceCount: 1,
                     resourceCount: 0,
-                    metadataTags: ["feature"]
+                    primaryLayer: "feature",
+                    layerSource: .metadataTag,
+                    metadataTags: [],
+                    suggestedLayer: "feature",
+                    suggestedLayerSource: .metadataTag
                 ),
                 SpiderGraphNode(
                     id: "target::examples/TuistFixture::FeatureB",
@@ -701,7 +993,11 @@ private enum SampleGraph {
                     isExternal: false,
                     sourceCount: 1,
                     resourceCount: 0,
-                    metadataTags: ["feature"]
+                    primaryLayer: "feature",
+                    layerSource: .metadataTag,
+                    metadataTags: [],
+                    suggestedLayer: "feature",
+                    suggestedLayerSource: .metadataTag
                 ),
                 SpiderGraphNode(
                     id: "target::examples/TuistFixture::Core",
@@ -715,7 +1011,11 @@ private enum SampleGraph {
                     isExternal: false,
                     sourceCount: 1,
                     resourceCount: 0,
-                    metadataTags: ["foundation"]
+                    primaryLayer: "foundation",
+                    layerSource: .metadataTag,
+                    metadataTags: [],
+                    suggestedLayer: "foundation",
+                    suggestedLayerSource: .metadataTag
                 ),
                 SpiderGraphNode(
                     id: "package::NetworkingKit",
@@ -729,6 +1029,8 @@ private enum SampleGraph {
                     isExternal: true,
                     sourceCount: 0,
                     resourceCount: 0,
+                    primaryLayer: nil,
+                    layerSource: nil,
                     metadataTags: []
                 ),
             ],

@@ -24,5 +24,16 @@ let project = Project(
             sources: ["App/Sources/**"],
             resources: ["App/Resources/**"]
         ),
+        .target(
+            name: "TuistSpiderTests",
+            destinations: [.mac],
+            product: .unitTests,
+            bundleId: "com.leejungyeob.TuistSpiderTests",
+            infoPlist: .default,
+            sources: ["Tests/**"],
+            dependencies: [
+                .target(name: "TuistSpider"),
+            ]
+        ),
     ]
 )

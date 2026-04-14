@@ -90,6 +90,13 @@ struct ContentView: View {
                         }
                     }
 
+                    Picker("레이어", selection: $viewModel.selectedLayerFilter) {
+                        ForEach(viewModel.layerFilterOptions) { option in
+                            Text("\(option.filter.title) (\(option.count))")
+                                .tag(option.filter)
+                        }
+                    }
+
                     VStack(alignment: .leading, spacing: 8) {
                         Text("표현 방식")
                             .font(.caption)
@@ -105,6 +112,13 @@ struct ContentView: View {
                     }
 
                     Toggle("외부 의존성 포함", isOn: $viewModel.includeExternal)
+
+                    if !viewModel.graph.warnings.isEmpty {
+                        Label("레이어 경고 \(viewModel.graph.warnings.count)건", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .help(viewModel.graph.warnings.joined(separator: "\n"))
+                    }
 
                     Button("뷰 초기화") {
                         viewModel.resetView()
@@ -189,6 +203,7 @@ struct ContentView: View {
                         Text(node.kindLabel.uppercased())
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
+                        LayerBadge(layerName: node.primaryLayer)
                         Text(node.projectPath ?? "External dependency")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -212,6 +227,9 @@ struct ContentView: View {
 
                     dependencySection(title: "직접 의존성", nodes: viewModel.directDependencies)
                     dependencySection(title: "직접 역의존성", nodes: viewModel.directDependents)
+                    if viewModel.canEditLayerClassification(for: node) {
+                        layerEditorSection(node: node)
+                    }
                     metadataSection(node: node)
                 } else {
                     ContentUnavailableView(
@@ -263,6 +281,7 @@ struct ContentView: View {
                 statCard(title: "내부 연결", value: "\(levelGroup.internalEdgeCount)")
             }
 
+            levelLayerSummarySection(levelGroup: levelGroup)
             levelNodesSection(levelGroup: levelGroup)
         }
     }
@@ -301,9 +320,12 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(node.name)
                                     .foregroundStyle(.primary)
-                                Text(node.projectLabel)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 6) {
+                                    Text(node.projectLabel)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    LayerBadge(layerName: node.primaryLayer, font: .caption2)
+                                }
                             }
                             Spacer()
                             Text(node.kindLabel)
@@ -514,17 +536,69 @@ struct ContentView: View {
         }
     }
 
+    private func layerEditorSection(node: SpiderGraphNode) -> some View {
+        LayerEditorSection(
+            node: node,
+            availableLayers: viewModel.availableLayerOptions(for: node),
+            onSelectLayer: { layerName in
+                viewModel.applyLayerClassification(for: node.id, layerName: layerName)
+            },
+            onApplyCustomLayer: { layerName in
+                viewModel.applyLayerClassification(for: node.id, layerName: layerName)
+            },
+            onResetToSuggested: {
+                viewModel.resetLayerClassificationToSuggested(for: node.id)
+            }
+        )
+        .id(node.id)
+    }
+
     private func metadataSection(node: SpiderGraphNode) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("메타데이터")
                 .font(.headline)
 
+            metadataRow(title: "Applied Layer", value: node.layerLabel)
+            metadataRow(title: "Applied Source", value: node.layerSourceLabel ?? "-")
+            metadataRow(title: "Suggested Layer", value: node.suggestedLayerLabel)
+            metadataRow(title: "Suggested Source", value: node.suggestedLayerSourceLabel ?? "-")
+            metadataRow(title: "Classification", value: node.hasSavedLayerOverride ? "Saved Override" : "Suggested Value")
             metadataRow(title: "Kind", value: node.kindLabel)
             metadataRow(title: "Project", value: node.projectLabel)
             metadataRow(title: "Bundle ID", value: node.bundleId ?? "-")
             metadataRow(title: "Sources", value: "\(node.sourceCount)")
             metadataRow(title: "Resources", value: "\(node.resourceCount)")
-            metadataRow(title: "Tags", value: node.metadataTags.isEmpty ? "-" : node.metadataTags.joined(separator: ", "))
+            metadataRow(title: "Tags (read-only)", value: node.metadataTags.isEmpty ? "-" : node.metadataTags.joined(separator: ", "))
+        }
+    }
+
+    private func levelLayerSummarySection(levelGroup: SpiderGraphLevelGroup) -> some View {
+        let items = Dictionary(grouping: levelGroup.nodes, by: \.layerLabel)
+            .map { key, value in
+                (name: key, count: value.count)
+            }
+            .sorted { lhs, rhs in
+                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("레이어 구성")
+                .font(.headline)
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                ForEach(items, id: \.name) { item in
+                    HStack(spacing: 8) {
+                        LayerBadge(layerName: item.name == TuistSpiderViewModel.unclassifiedLayerTitle ? nil : item.name)
+                        Spacer(minLength: 0)
+                        Text("\(item.count)개")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
         }
     }
 
@@ -552,9 +626,12 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(node.name)
                             .foregroundStyle(.primary)
-                        Text(node.projectLabel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            Text(node.projectLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            LayerBadge(layerName: node.primaryLayer, font: .caption2)
+                        }
                     }
                     Spacer()
                     Text(node.kindLabel)
@@ -592,6 +669,88 @@ struct ContentView: View {
     }
 }
 
+private struct LayerEditorSection: View {
+    private static let unclassifiedToken = "__tuist_spider_unclassified__"
+
+    let node: SpiderGraphNode
+    let availableLayers: [String]
+    let onSelectLayer: (String?) -> Void
+    let onApplyCustomLayer: (String) -> Void
+    let onResetToSuggested: () -> Void
+
+    @State private var customLayerName = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("레이어 분류")
+                    .font(.headline)
+                Spacer()
+                if node.hasSavedLayerOverride {
+                    Text("Saved Override")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                }
+            }
+
+            Picker("적용 레이어", selection: appliedLayerSelection) {
+                Text(TuistSpiderViewModel.unclassifiedLayerTitle).tag(Self.unclassifiedToken)
+                ForEach(availableLayers, id: \.self) { layer in
+                    Text(layer).tag(layer)
+                }
+            }
+            .pickerStyle(.menu)
+
+            HStack(spacing: 8) {
+                TextField("Custom layer", text: $customLayerName)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(applyCustomLayer)
+
+                Button("적용") {
+                    applyCustomLayer()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(normalizedCustomLayerName == nil || normalizedCustomLayerName == node.primaryLayer)
+            }
+
+            HStack(spacing: 8) {
+                Button("Reset to Suggested") {
+                    onResetToSuggested()
+                }
+                .buttonStyle(.bordered)
+                .disabled(!node.hasSavedLayerOverride)
+
+                Text("자동 제안: \(node.suggestedLayerLabel)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var appliedLayerSelection: Binding<String> {
+        Binding(
+            get: { node.primaryLayer ?? Self.unclassifiedToken },
+            set: { selection in
+                onSelectLayer(selection == Self.unclassifiedToken ? nil : selection)
+            }
+        )
+    }
+
+    private var normalizedCustomLayerName: String? {
+        let trimmed = customLayerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func applyCustomLayer() {
+        guard let normalizedCustomLayerName else { return }
+        onApplyCustomLayer(normalizedCustomLayerName)
+        customLayerName = ""
+    }
+}
+
 private struct RelatedNodeSearchResults: View {
     let nodes: [SpiderGraphNode]
     let selectedNodeID: String?
@@ -623,9 +782,12 @@ private struct RelatedNodeSearchResults: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(node.name)
                         .foregroundStyle(.primary)
-                    Text(node.projectLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text(node.projectLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        LayerBadge(layerName: node.primaryLayer, font: .caption2)
+                    }
                 }
                 Spacer()
                 if selectedNodeID == node.id {
@@ -648,9 +810,12 @@ private struct SidebarNodeRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(node.name)
                     .font(.body.weight(.semibold))
-                Text(node.projectLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(node.projectLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    LayerBadge(layerName: node.primaryLayer, font: .caption2)
+                }
             }
             Spacer()
             Text(node.kindLabel)
@@ -658,5 +823,23 @@ private struct SidebarNodeRow: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct LayerBadge: View {
+    let layerName: String?
+    var font: Font = .caption2.weight(.semibold)
+
+    var body: some View {
+        Text(layerName ?? TuistSpiderViewModel.unclassifiedLayerTitle)
+            .font(font)
+            .foregroundStyle(badgeColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(badgeColor.opacity(0.16), in: Capsule())
+    }
+
+    private var badgeColor: Color {
+        LayerColorPalette.color(for: layerName)
     }
 }

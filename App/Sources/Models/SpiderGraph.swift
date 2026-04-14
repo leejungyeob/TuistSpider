@@ -1,6 +1,89 @@
 import CoreGraphics
 import Foundation
 
+enum SpiderGraphLayerSource: String, Hashable, Sendable {
+    case metadataTag = "metadata-tag"
+    case projectSnapshot = "project-snapshot"
+    case inferredPath = "inferred-path"
+    case inferredName = "inferred-name"
+    case inferredProduct = "inferred-product"
+    case normalizedNode = "normalized-node"
+
+    var label: String {
+        switch self {
+        case .metadataTag:
+            return "metadata.tags"
+        case .projectSnapshot:
+            return "project snapshot"
+        case .inferredPath:
+            return "inferred from path"
+        case .inferredName:
+            return "inferred from name"
+        case .inferredProduct:
+            return "inferred from product"
+        case .normalizedNode:
+            return "normalized node"
+        }
+    }
+}
+
+enum SpiderGraphLayerFilter: Hashable, Identifiable, Sendable {
+    case all
+    case unclassified
+    case layer(String)
+
+    init?(persistedValue: String) {
+        switch persistedValue {
+        case "all":
+            self = .all
+        case "unclassified":
+            self = .unclassified
+        default:
+            let prefix = "layer:"
+            guard persistedValue.hasPrefix(prefix) else { return nil }
+            let value = String(persistedValue.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return nil }
+            self = .layer(value)
+        }
+    }
+
+    var id: String { persistedValue }
+
+    var persistedValue: String {
+        switch self {
+        case .all:
+            return "all"
+        case .unclassified:
+            return "unclassified"
+        case let .layer(name):
+            return "layer:\(name)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .all:
+            return "전체"
+        case .unclassified:
+            return "Unclassified"
+        case let .layer(name):
+            return name
+        }
+    }
+
+    func matches(_ node: SpiderGraphNode) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .unclassified:
+            return !node.isExternal && node.primaryLayer == nil
+        case let .layer(name):
+            return !node.isExternal && node.primaryLayer?.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }
+    }
+}
+
 struct SpiderGraphNode: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
@@ -13,7 +96,50 @@ struct SpiderGraphNode: Identifiable, Hashable, Sendable {
     let isExternal: Bool
     let sourceCount: Int
     let resourceCount: Int
+    let primaryLayer: String?
+    let layerSource: SpiderGraphLayerSource?
     let metadataTags: [String]
+    let suggestedLayer: String?
+    let suggestedLayerSource: SpiderGraphLayerSource?
+    let hasPersistedClassification: Bool
+
+    init(
+        id: String,
+        name: String,
+        displayName: String,
+        kind: String,
+        product: String?,
+        bundleId: String?,
+        projectName: String?,
+        projectPath: String?,
+        isExternal: Bool,
+        sourceCount: Int,
+        resourceCount: Int,
+        primaryLayer: String?,
+        layerSource: SpiderGraphLayerSource?,
+        metadataTags: [String],
+        suggestedLayer: String? = nil,
+        suggestedLayerSource: SpiderGraphLayerSource? = nil,
+        hasPersistedClassification: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.displayName = displayName
+        self.kind = kind
+        self.product = product
+        self.bundleId = bundleId
+        self.projectName = projectName
+        self.projectPath = projectPath
+        self.isExternal = isExternal
+        self.sourceCount = sourceCount
+        self.resourceCount = resourceCount
+        self.primaryLayer = primaryLayer
+        self.layerSource = layerSource
+        self.metadataTags = metadataTags
+        self.suggestedLayer = suggestedLayer
+        self.suggestedLayerSource = suggestedLayerSource
+        self.hasPersistedClassification = hasPersistedClassification
+    }
 
     var kindLabel: String {
         if kind == "target" {
@@ -24,6 +150,56 @@ struct SpiderGraphNode: Identifiable, Hashable, Sendable {
 
     var projectLabel: String {
         projectName ?? "External"
+    }
+
+    var layerLabel: String {
+        primaryLayer ?? "Unclassified"
+    }
+
+    var layerSourceLabel: String? {
+        layerSource?.label
+    }
+
+    var suggestedLayerLabel: String {
+        suggestedLayer ?? "Unclassified"
+    }
+
+    var suggestedLayerSourceLabel: String? {
+        suggestedLayerSource?.label
+    }
+
+    var isInternalTarget: Bool {
+        !isExternal && kind == "target"
+    }
+
+    var hasSavedLayerOverride: Bool {
+        primaryLayer != suggestedLayer
+    }
+
+    func updatingClassification(
+        primaryLayer: String?,
+        layerSource: SpiderGraphLayerSource?,
+        hasPersistedClassification: Bool
+    ) -> SpiderGraphNode {
+        SpiderGraphNode(
+            id: id,
+            name: name,
+            displayName: displayName,
+            kind: kind,
+            product: product,
+            bundleId: bundleId,
+            projectName: projectName,
+            projectPath: projectPath,
+            isExternal: isExternal,
+            sourceCount: sourceCount,
+            resourceCount: resourceCount,
+            primaryLayer: primaryLayer,
+            layerSource: layerSource,
+            metadataTags: metadataTags,
+            suggestedLayer: suggestedLayer,
+            suggestedLayerSource: suggestedLayerSource,
+            hasPersistedClassification: hasPersistedClassification
+        )
     }
 }
 
@@ -1146,14 +1322,22 @@ enum SpiderGraphAnchorSide: Hashable, Sendable {
 }
 
 struct SpiderGraphCanvasLayout: Sendable {
+    let layerRegions: [SpiderGraphCanvasLayerRegion]
     let nodeFrames: [String: CGRect]
     let canvasSize: CGSize
 
     static func make(for nodes: [SpiderGraphNode], levels: [String: Int]) -> SpiderGraphCanvasLayout {
+        guard !nodes.isEmpty else {
+            return SpiderGraphCanvasLayout(layerRegions: [], nodeFrames: [:], canvasSize: .zero)
+        }
+
         let nodeWidth: CGFloat = 220
         let nodeHeight: CGFloat = 72
         let columnGap: CGFloat = 280
-        let rowGap: CGFloat = 110
+        let rowGap: CGFloat = 96
+        let layerGap: CGFloat = 40
+        let layerHeaderHeight: CGFloat = 38
+        let layerPaddingY: CGFloat = 18
         let paddingX: CGFloat = 120
         let paddingY: CGFloat = 100
 
@@ -1168,27 +1352,160 @@ struct SpiderGraphCanvasLayout: Sendable {
             groups[level]?.sort(by: SpiderGraph.nodeSort)
         }
 
-        let maxColumnSize = max(orderedLevels.compactMap { groups[$0]?.count }.max() ?? 0, 1)
         let width = paddingX * 2 + CGFloat(max(orderedLevels.count - 1, 1)) * columnGap + nodeWidth
-        let height = paddingY * 2 + CGFloat(max(maxColumnSize - 1, 1)) * rowGap + nodeHeight
-        let centerY = height / 2
+        let layerKinds = canvasLayerKinds(for: nodes)
+        let nodesByLevelAndLayer = Dictionary(
+            uniqueKeysWithValues: orderedLevels.map { level in
+                let groupedNodes = Dictionary(grouping: groups[level] ?? [], by: canvasLayerKind(for:))
+                return (level, groupedNodes)
+            }
+        )
+        let layerSlotCounts = Dictionary(
+            uniqueKeysWithValues: layerKinds.map { layerKind in
+                let maxCount = orderedLevels.map { level in
+                    nodesByLevelAndLayer[level]?[layerKind]?.count ?? 0
+                }.max() ?? 0
+                return (layerKind, max(maxCount, 1))
+            }
+        )
+
+        let regionX = max(32, paddingX - 36)
+        let regionWidth = max(nodeWidth, width - regionX - 44)
+        var layerFrames: [SpiderGraphCanvasLayerKind: CGRect] = [:]
+        var currentY = paddingY
+
+        for layerKind in layerKinds {
+            let slotCount = layerSlotCounts[layerKind] ?? 1
+            let contentHeight = nodeHeight + CGFloat(max(slotCount - 1, 0)) * rowGap
+            let layerHeight = contentHeight + layerHeaderHeight + layerPaddingY * 2
+            layerFrames[layerKind] = CGRect(
+                x: regionX,
+                y: currentY,
+                width: regionWidth,
+                height: layerHeight
+            )
+            currentY += layerHeight + layerGap
+        }
+
+        let height = max(currentY - layerGap + paddingY, paddingY * 2 + nodeHeight)
 
         var nodeFrames: [String: CGRect] = [:]
         for (columnIndex, level) in orderedLevels.enumerated() {
-            let columnNodes = groups[level] ?? []
-            let columnHeight = CGFloat(max(columnNodes.count - 1, 0)) * rowGap
-            let startY = centerY - columnHeight / 2
-            for (rowIndex, node) in columnNodes.enumerated() {
-                let origin = CGPoint(
-                    x: paddingX + CGFloat(columnIndex) * columnGap,
-                    y: startY + CGFloat(rowIndex) * rowGap
-                )
-                nodeFrames[node.id] = CGRect(origin: origin, size: CGSize(width: nodeWidth, height: nodeHeight))
+            let originX = paddingX + CGFloat(columnIndex) * columnGap
+
+            for layerKind in layerKinds {
+                guard
+                    let layerFrame = layerFrames[layerKind],
+                    let layerNodes = nodesByLevelAndLayer[level]?[layerKind]?.sorted(by: SpiderGraph.nodeSort),
+                    !layerNodes.isEmpty
+                else {
+                    continue
+                }
+
+                let contentHeight = nodeHeight + CGFloat(max(layerNodes.count - 1, 0)) * rowGap
+                let contentOriginY = layerFrame.minY + layerHeaderHeight + layerPaddingY
+                let contentRegionHeight = layerFrame.height - layerHeaderHeight - layerPaddingY * 2
+                var currentNodeY = contentOriginY + (contentRegionHeight - contentHeight) / 2
+
+                for node in layerNodes {
+                    let origin = CGPoint(x: originX, y: currentNodeY)
+                    nodeFrames[node.id] = CGRect(origin: origin, size: CGSize(width: nodeWidth, height: nodeHeight))
+                    currentNodeY += rowGap
+                }
             }
         }
 
-        return SpiderGraphCanvasLayout(nodeFrames: nodeFrames, canvasSize: CGSize(width: width, height: height))
+        let layerRegions = layerKinds.compactMap { layerKind -> SpiderGraphCanvasLayerRegion? in
+            guard let frame = layerFrames[layerKind] else { return nil }
+            let nodeIDs = nodes
+                .filter { canvasLayerKind(for: $0) == layerKind }
+                .map(\.id)
+            return SpiderGraphCanvasLayerRegion(kind: layerKind, frame: frame, nodeIDs: nodeIDs)
+        }
+
+        return SpiderGraphCanvasLayout(
+            layerRegions: layerRegions,
+            nodeFrames: nodeFrames,
+            canvasSize: CGSize(width: width, height: height)
+        )
     }
+
+    private static func canvasLayerKinds(for nodes: [SpiderGraphNode]) -> [SpiderGraphCanvasLayerKind] {
+        let internalLayerNames = Set<String>(
+            nodes.compactMap { node in
+                guard !node.isExternal else { return nil }
+                return node.primaryLayer
+            }
+        )
+        let orderedInternalLayerNames = internalLayerNames.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+
+        var kinds: [SpiderGraphCanvasLayerKind] = orderedInternalLayerNames.map(SpiderGraphCanvasLayerKind.layer)
+        if nodes.contains(where: { !$0.isExternal && $0.primaryLayer == nil }) {
+            kinds.append(SpiderGraphCanvasLayerKind.unclassified)
+        }
+        if nodes.contains(where: \.isExternal) {
+            kinds.append(SpiderGraphCanvasLayerKind.external)
+        }
+
+        return kinds.isEmpty ? [SpiderGraphCanvasLayerKind.unclassified] : kinds
+    }
+
+    private static func canvasLayerKind(for node: SpiderGraphNode) -> SpiderGraphCanvasLayerKind {
+        if node.isExternal {
+            return .external
+        }
+        if let primaryLayer = node.primaryLayer {
+            return .layer(primaryLayer)
+        }
+        return .unclassified
+    }
+}
+
+enum SpiderGraphCanvasLayerKind: Hashable, Sendable {
+    case layer(String)
+    case unclassified
+    case external
+
+    var id: String {
+        switch self {
+        case let .layer(name):
+            return "layer:\(name)"
+        case .unclassified:
+            return "unclassified"
+        case .external:
+            return "external"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case let .layer(name):
+            return name
+        case .unclassified:
+            return "Unclassified"
+        case .external:
+            return "External"
+        }
+    }
+
+    var layerName: String? {
+        switch self {
+        case let .layer(name):
+            return name
+        case .unclassified, .external:
+            return nil
+        }
+    }
+}
+
+struct SpiderGraphCanvasLayerRegion: Identifiable, Hashable, Sendable {
+    let kind: SpiderGraphCanvasLayerKind
+    let frame: CGRect
+    let nodeIDs: [String]
+
+    var id: String { kind.id }
 }
 
 struct SpiderGraphLevelCanvasLayout: Sendable {
@@ -1225,6 +1542,7 @@ struct SpiderGraph: Hashable, Sendable {
     let sourceFormat: String
     let rootPath: String?
     let generatedAt: String?
+    let warnings: [String]
     let nodes: [SpiderGraphNode]
     let edges: [SpiderGraphEdge]
     let nodeMap: [String: SpiderGraphNode]
@@ -1236,6 +1554,7 @@ struct SpiderGraph: Hashable, Sendable {
         sourceFormat: String,
         rootPath: String?,
         generatedAt: String?,
+        warnings: [String] = [],
         nodes: [SpiderGraphNode],
         edges: [SpiderGraphEdge]
     ) {
@@ -1243,6 +1562,7 @@ struct SpiderGraph: Hashable, Sendable {
         self.sourceFormat = sourceFormat
         self.rootPath = rootPath
         self.generatedAt = generatedAt
+        self.warnings = warnings
         self.nodes = nodes.sorted(by: SpiderGraph.nodeSort)
         self.edges = edges.sorted { lhs, rhs in
             if lhs.from != rhs.from { return lhs.from < rhs.from }
@@ -1268,6 +1588,23 @@ struct SpiderGraph: Hashable, Sendable {
         }
         self.outgoing = outgoing
         self.incoming = incoming
+    }
+
+    func replacingNodes(_ nodes: [SpiderGraphNode], warnings: [String]? = nil) -> SpiderGraph {
+        SpiderGraph(
+            graphName: graphName,
+            sourceFormat: sourceFormat,
+            rootPath: rootPath,
+            generatedAt: generatedAt,
+            warnings: warnings ?? self.warnings,
+            nodes: nodes,
+            edges: edges
+        )
+    }
+
+    func appendingWarnings(_ additionalWarnings: [String]) -> SpiderGraph {
+        guard !additionalWarnings.isEmpty else { return self }
+        return replacingNodes(nodes, warnings: warnings + additionalWarnings)
     }
 
     var preferredRootID: String? {
@@ -1300,30 +1637,39 @@ struct SpiderGraph: Hashable, Sendable {
             .id
     }
 
-    func directDependencies(of nodeID: String, includeExternal: Bool) -> [SpiderGraphNode] {
+    func directDependencies(
+        of nodeID: String,
+        includeExternal: Bool,
+        layerFilter: SpiderGraphLayerFilter = .all
+    ) -> [SpiderGraphNode] {
         let ids = outgoing[nodeID] ?? []
         return ids.compactMap { nodeMap[$0] }
-            .filter { includeExternal || !$0.isExternal }
+            .filter { matchesFilters(for: $0, includeExternal: includeExternal, layerFilter: layerFilter) }
             .sorted(by: SpiderGraph.nodeSort)
     }
 
-    func directDependents(of nodeID: String, includeExternal: Bool) -> [SpiderGraphNode] {
+    func directDependents(
+        of nodeID: String,
+        includeExternal: Bool,
+        layerFilter: SpiderGraphLayerFilter = .all
+    ) -> [SpiderGraphNode] {
         let ids = incoming[nodeID] ?? []
         return ids.compactMap { nodeMap[$0] }
-            .filter { includeExternal || !$0.isExternal }
+            .filter { matchesFilters(for: $0, includeExternal: includeExternal, layerFilter: layerFilter) }
             .sorted(by: SpiderGraph.nodeSort)
     }
 
     func maxReachableDepth(
         centeredOn rootID: String,
         direction: GraphDirection,
-        includeExternal: Bool
+        includeExternal: Bool,
+        layerFilter: SpiderGraphLayerFilter = .all
     ) -> Int {
         guard nodeMap[rootID] != nil else { return 0 }
 
         func allows(_ nodeID: String) -> Bool {
             guard let node = nodeMap[nodeID] else { return false }
-            return includeExternal || !node.isExternal || nodeID == rootID
+            return matchesFilters(for: node, includeExternal: includeExternal, layerFilter: layerFilter) || nodeID == rootID
         }
 
         var maxDistance = 0
@@ -1340,7 +1686,8 @@ struct SpiderGraph: Hashable, Sendable {
         centeredOn rootID: String,
         direction: GraphDirection,
         depth: GraphDepth,
-        includeExternal: Bool
+        includeExternal: Bool,
+        layerFilter: SpiderGraphLayerFilter = .all
     ) -> SpiderGraphSubgraph {
         guard nodeMap[rootID] != nil else {
             return SpiderGraphSubgraph(nodes: [], edges: [], levels: [:])
@@ -1348,7 +1695,7 @@ struct SpiderGraph: Hashable, Sendable {
 
         func allows(_ nodeID: String) -> Bool {
             guard let node = nodeMap[nodeID] else { return false }
-            return includeExternal || !node.isExternal || nodeID == rootID
+            return matchesFilters(for: node, includeExternal: includeExternal, layerFilter: layerFilter) || nodeID == rootID
         }
 
         var levels: [String: Int] = [rootID: 0]
@@ -1470,7 +1817,19 @@ struct SpiderGraph: Hashable, Sendable {
         if leftProject != rightProject {
             return leftProject.localizedCaseInsensitiveCompare(rightProject) == .orderedAscending
         }
+        if lhs.layerLabel != rhs.layerLabel {
+            return lhs.layerLabel.localizedCaseInsensitiveCompare(rhs.layerLabel) == .orderedAscending
+        }
         return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
+
+    private func matchesFilters(
+        for node: SpiderGraphNode,
+        includeExternal: Bool,
+        layerFilter: SpiderGraphLayerFilter
+    ) -> Bool {
+        guard includeExternal || !node.isExternal else { return false }
+        return layerFilter.matches(node)
     }
 
     private func productRank(for node: SpiderGraphNode) -> Int {

@@ -38,6 +38,10 @@ struct GraphCanvasView: View {
         subgraph.canvasLayout
     }
 
+    private var layerRegions: [SpiderGraphCanvasLayerRegion] {
+        layout.layerRegions
+    }
+
     private var levelGroups: [SpiderGraphLevelGroup] {
         subgraph.levelGroups
     }
@@ -83,11 +87,18 @@ struct GraphCanvasView: View {
     }
 
     private var expandedEdgeRenderModels: [ExpandedEdgeRenderModel] {
-        subgraph.edges.compactMap { edge in
+        var laneOccupancy = ExpandedEdgeLaneOccupancy()
+        return subgraph.edges.compactMap { edge in
             guard let endpoints = subgraph.edgeEndpoints[edge.id] else { return nil }
 
             let matchingPaths = edgeConnectionPaths[edge.id] ?? []
-            let geometry = expandedEdgeGeometry(for: edge, endpoints: endpoints, matchingPaths: matchingPaths)
+            let geometry = expandedEdgeGeometry(
+                for: edge,
+                endpoints: endpoints,
+                matchingPaths: matchingPaths,
+                laneOccupancy: laneOccupancy
+            )
+            laneOccupancy.record(geometry)
             let baseArrowSize = baseArrowSize(for: edge)
             let baseLayer = ExpandedEdgeLayer(
                 geometry: geometry,
@@ -199,6 +210,12 @@ struct GraphCanvasView: View {
 
     private var expandedCanvasContent: some View {
         ZStack(alignment: .topLeading) {
+            ForEach(layerRegions) { region in
+                LayerRegionBackground(region: region)
+                    .frame(width: region.frame.width, height: region.frame.height)
+                    .position(x: region.frame.midX, y: region.frame.midY)
+            }
+
             Canvas(rendersAsynchronously: true) { context, _ in
                 drawExpandedEdges(in: context)
             }
@@ -390,22 +407,41 @@ struct GraphCanvasView: View {
     private func expandedEdgeGeometry(
         for edge: SpiderGraphEdge,
         endpoints: SpiderGraphEdgeEndpoints,
-        matchingPaths: [SpiderGraphConnectionPath]
+        matchingPaths: [SpiderGraphConnectionPath],
+        laneOccupancy: ExpandedEdgeLaneOccupancy
     ) -> EdgePathGeometry {
-        let directGeometry = preferredExpandedDirectGeometry(for: endpoints)
+        let directGeometry = preferredExpandedDirectGeometry(
+            for: endpoints,
+            laneOccupancy: laneOccupancy
+        )
         guard shouldRouteAroundObstacles(for: edge, matchingPaths: matchingPaths) else {
             return directGeometry
         }
         let obstacles = expandedObstacleFrames(for: edge, endpoints: endpoints)
         let directIntersections = intersectingObstacles(for: directGeometry, obstacles: obstacles)
-        guard !directIntersections.isEmpty else {
+        let directOverlapPenalty = laneOccupancy.overlapPenalty(for: directGeometry)
+        guard !directIntersections.isEmpty || directOverlapPenalty > 0 else {
             return directGeometry
         }
 
-        let obstacleBounds = directIntersections.reduce(into: directIntersections[0]) { partialResult, frame in
-            partialResult = partialResult.union(frame)
-        }
-        var bestCandidate: (geometry: EdgePathGeometry, collisionCount: Int, distanceCost: CGFloat)?
+        let startX = min(endpoints.start.x, endpoints.end.x)
+        let startY = min(endpoints.start.y, endpoints.end.y)
+        let routeBounds = directIntersections.isEmpty
+            ? CGRect(
+                x: startX,
+                y: startY,
+                width: max(abs(endpoints.end.x - endpoints.start.x), 1),
+                height: max(abs(endpoints.end.y - endpoints.start.y), 1)
+            )
+            : directIntersections.reduce(into: directIntersections[0]) { partialResult, frame in
+                partialResult = partialResult.union(frame)
+            }
+        var bestCandidate = (
+            geometry: directGeometry,
+            collisionCount: directIntersections.count,
+            overlapPenalty: directOverlapPenalty,
+            distanceCost: CGFloat(0)
+        )
 
         if endpoints.sourceSide.isHorizontal && endpoints.targetSide.isHorizontal {
             let horizontalDistance = abs(endpoints.end.x - endpoints.start.x)
@@ -426,8 +462,8 @@ struct GraphCanvasView: View {
                     min(layout.canvasSize.height - 18, frame.maxY + nearLaneMargin)
                 ]
             }
-            let topLane = max(18, obstacleBounds.minY - farLaneMargin)
-            let bottomLane = min(layout.canvasSize.height - 18, obstacleBounds.maxY + farLaneMargin)
+            let topLane = max(18, routeBounds.minY - farLaneMargin)
+            let bottomLane = min(layout.canvasSize.height - 18, routeBounds.maxY + farLaneMargin)
             let farTopLane = max(18, min(topLane - 28, minStartEndY - 24))
             let farBottomLane = min(layout.canvasSize.height - 18, max(bottomLane + 28, maxStartEndY + 24))
             let laneCandidates = uniqueLaneValues(obstacleLanes + [topLane, bottomLane, farTopLane, farBottomLane])
@@ -452,22 +488,23 @@ struct GraphCanvasView: View {
 
                     let geometry = EdgePathGeometry.routed(EdgeRoutedGeometry(points: points))
                     let collisions = intersectingObstacles(for: geometry, obstacles: obstacles)
-                    if collisions.isEmpty {
+                    let overlapPenalty = laneOccupancy.overlapPenalty(for: geometry)
+                    if collisions.isEmpty, overlapPenalty <= 0.5 {
                         return geometry
                     }
 
                     let candidate = (
                         geometry: geometry,
                         collisionCount: collisions.count,
+                        overlapPenalty: overlapPenalty,
                         distanceCost: laneDistanceCost(for: endpoints, laneY: laneY) + centerBias(for: endpoints, laneY: laneY) * 0.45 + horizontalInset * 0.12
                     )
 
-                    if let currentBest = bestCandidate {
-                        if candidate.collisionCount < currentBest.collisionCount ||
-                            (candidate.collisionCount == currentBest.collisionCount && candidate.distanceCost < currentBest.distanceCost) {
-                            bestCandidate = candidate
-                        }
-                    } else {
+                    if candidate.collisionCount < bestCandidate.collisionCount ||
+                        (candidate.collisionCount == bestCandidate.collisionCount && candidate.overlapPenalty < bestCandidate.overlapPenalty) ||
+                        (candidate.collisionCount == bestCandidate.collisionCount &&
+                            abs(candidate.overlapPenalty - bestCandidate.overlapPenalty) < 0.5 &&
+                            candidate.distanceCost < bestCandidate.distanceCost) {
                         bestCandidate = candidate
                     }
                 }
@@ -491,8 +528,8 @@ struct GraphCanvasView: View {
                     min(layout.canvasSize.width - 18, frame.maxX + nearLaneMargin)
                 ]
             }
-            let leftLane = max(18, obstacleBounds.minX - farLaneMargin)
-            let rightLane = min(layout.canvasSize.width - 18, obstacleBounds.maxX + farLaneMargin)
+            let leftLane = max(18, routeBounds.minX - farLaneMargin)
+            let rightLane = min(layout.canvasSize.width - 18, routeBounds.maxX + farLaneMargin)
             let farLeftLane = max(18, min(leftLane - 28, minStartEndX - 24))
             let farRightLane = min(layout.canvasSize.width - 18, max(rightLane + 28, maxStartEndX + 24))
             let laneCandidates = uniqueLaneValues(obstacleLanes + [leftLane, rightLane, farLeftLane, farRightLane])
@@ -517,32 +554,50 @@ struct GraphCanvasView: View {
 
                     let geometry = EdgePathGeometry.routed(EdgeRoutedGeometry(points: points))
                     let collisions = intersectingObstacles(for: geometry, obstacles: obstacles)
-                    if collisions.isEmpty {
+                    let overlapPenalty = laneOccupancy.overlapPenalty(for: geometry)
+                    if collisions.isEmpty, overlapPenalty <= 0.5 {
                         return geometry
                     }
 
                     let candidate = (
                         geometry: geometry,
                         collisionCount: collisions.count,
+                        overlapPenalty: overlapPenalty,
                         distanceCost: laneDistanceCost(for: endpoints, laneX: laneX) + centerBias(for: endpoints, laneX: laneX) * 0.45 + verticalInset * 0.12
                     )
 
-                    if let currentBest = bestCandidate {
-                        if candidate.collisionCount < currentBest.collisionCount ||
-                            (candidate.collisionCount == currentBest.collisionCount && candidate.distanceCost < currentBest.distanceCost) {
-                            bestCandidate = candidate
-                        }
-                    } else {
+                    if candidate.collisionCount < bestCandidate.collisionCount ||
+                        (candidate.collisionCount == bestCandidate.collisionCount && candidate.overlapPenalty < bestCandidate.overlapPenalty) ||
+                        (candidate.collisionCount == bestCandidate.collisionCount &&
+                            abs(candidate.overlapPenalty - bestCandidate.overlapPenalty) < 0.5 &&
+                            candidate.distanceCost < bestCandidate.distanceCost) {
                         bestCandidate = candidate
                     }
                 }
             }
         }
 
-        return bestCandidate?.geometry ?? directGeometry
+        return bestCandidate.geometry
     }
 
-    private func preferredExpandedDirectGeometry(for endpoints: SpiderGraphEdgeEndpoints) -> EdgePathGeometry {
+    private func preferredExpandedDirectGeometry(
+        for endpoints: SpiderGraphEdgeEndpoints,
+        laneOccupancy: ExpandedEdgeLaneOccupancy
+    ) -> EdgePathGeometry {
+        let directGeometry = baseExpandedDirectGeometry(for: endpoints)
+        let candidates = [directGeometry] + directDetourGeometries(for: endpoints)
+
+        return candidates.min { lhs, rhs in
+            let lhsPenalty = laneOccupancy.overlapPenalty(for: lhs)
+            let rhsPenalty = laneOccupancy.overlapPenalty(for: rhs)
+            if abs(lhsPenalty - rhsPenalty) >= 0.5 {
+                return lhsPenalty < rhsPenalty
+            }
+            return geometryDistanceCost(lhs) < geometryDistanceCost(rhs)
+        } ?? directGeometry
+    }
+
+    private func baseExpandedDirectGeometry(for endpoints: SpiderGraphEdgeEndpoints) -> EdgePathGeometry {
         if shouldUseStraightExpandedGeometry(for: endpoints) {
             return .routed(EdgeRoutedGeometry(points: [endpoints.start, endpoints.end]))
         }
@@ -586,6 +641,66 @@ struct GraphCanvasView: View {
         }
 
         return .routed(EdgeRoutedGeometry(points: points))
+    }
+
+    private func directDetourGeometries(for endpoints: SpiderGraphEdgeEndpoints) -> [EdgePathGeometry] {
+        if endpoints.sourceSide.isHorizontal && endpoints.targetSide.isHorizontal {
+            let leadDistance: CGFloat = max(min(abs(endpoints.end.x - endpoints.start.x) * 0.18, 34), 18)
+            let startLead = offsetPoint(endpoints.start, toward: endpoints.sourceSide, distance: leadDistance)
+            let endLead = offsetPoint(endpoints.end, toward: endpoints.targetSide, distance: leadDistance)
+            let centerY = (startLead.y + endLead.y) / 2
+            let baseOffset = max(18, min(abs(endpoints.end.y - endpoints.start.y) * 0.24 + 14, 36))
+            let laneYs = uniqueLaneValues([
+                centerY - baseOffset,
+                centerY + baseOffset,
+                centerY - baseOffset * 1.75,
+                centerY + baseOffset * 1.75
+            ].map { min(max($0, 18), layout.canvasSize.height - 18) })
+
+            return laneYs.compactMap { laneY in
+                let points = deduplicatedRoutePoints([
+                    endpoints.start,
+                    startLead,
+                    CGPoint(x: startLead.x, y: laneY),
+                    CGPoint(x: endLead.x, y: laneY),
+                    endLead,
+                    endpoints.end
+                ])
+                guard points.count >= 2 else { return nil }
+                return .routed(EdgeRoutedGeometry(points: points))
+            }
+        }
+
+        let leadDistance: CGFloat = max(min(abs(endpoints.end.y - endpoints.start.y) * 0.22, 42), 24)
+        let startLead = offsetPoint(endpoints.start, toward: endpoints.sourceSide, distance: leadDistance)
+        let endLead = offsetPoint(endpoints.end, toward: endpoints.targetSide, distance: leadDistance)
+        let centerX = (startLead.x + endLead.x) / 2
+        let baseOffset = max(18, min(abs(endpoints.end.x - endpoints.start.x) * 0.24 + 14, 36))
+        let laneXs = uniqueLaneValues([
+            centerX - baseOffset,
+            centerX + baseOffset,
+            centerX - baseOffset * 1.75,
+            centerX + baseOffset * 1.75
+        ].map { min(max($0, 18), layout.canvasSize.width - 18) })
+
+        return laneXs.compactMap { laneX in
+            let points = deduplicatedRoutePoints([
+                endpoints.start,
+                startLead,
+                CGPoint(x: laneX, y: startLead.y),
+                CGPoint(x: laneX, y: endLead.y),
+                endLead,
+                endpoints.end
+            ])
+            guard points.count >= 2 else { return nil }
+            return .routed(EdgeRoutedGeometry(points: points))
+        }
+    }
+
+    private func geometryDistanceCost(_ geometry: EdgePathGeometry) -> CGFloat {
+        geometry.sampledPoints().adjacentPairs().reduce(into: 0) { partialResult, pair in
+            partialResult += hypot(pair.1.x - pair.0.x, pair.1.y - pair.0.y)
+        }
     }
 
     private func shouldUseStraightExpandedGeometry(for endpoints: SpiderGraphEdgeEndpoints) -> Bool {
@@ -821,6 +936,90 @@ private struct GraphNodeCard: View {
     }
 }
 
+private struct LayerRegionBackground: View {
+    let region: SpiderGraphCanvasLayerRegion
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(regionColor.opacity(region.kind == .external ? 0.08 : 0.11))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(
+                            boundaryColor,
+                            lineWidth: 1.6
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .inset(by: 3)
+                        .strokeBorder(
+                            regionColor.opacity(region.kind == .external ? 0.24 : 0.34),
+                            style: StrokeStyle(lineWidth: 1.1, dash: [10, 8])
+                        )
+                )
+                .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 10)
+
+            VStack(spacing: 0) {
+                regionDivider
+                Spacer()
+                regionDivider
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(regionColor)
+                    .frame(width: 6, height: 22)
+
+                Text(region.kind.title)
+                    .font(.caption.weight(.bold))
+                Text("\(region.nodeIDs.count)개")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(headerBackground, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(regionColor.opacity(0.55), lineWidth: 1)
+            )
+            .shadow(color: regionColor.opacity(0.18), radius: 6, x: 0, y: 3)
+            .padding(14)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var regionColor: Color {
+        LayerColorPalette.color(
+            for: region.kind.layerName,
+            isExternal: region.kind == .external
+        )
+    }
+
+    private var boundaryColor: Color {
+        Color.primary.opacity(0.18)
+    }
+
+    private var headerBackground: Color {
+        Color(nsColor: .windowBackgroundColor).opacity(0.92)
+    }
+
+    private var regionDivider: some View {
+        Rectangle()
+            .fill(boundaryColor)
+            .frame(height: 1.5)
+            .overlay(
+                Rectangle()
+                    .fill(regionColor.opacity(0.25))
+                    .frame(height: 0.5)
+                    .offset(y: 0.5)
+            )
+    }
+}
+
 private struct ExpandedEdgeRenderModel: Identifiable {
     let id: String
     let base: ExpandedEdgeLayer
@@ -913,12 +1112,18 @@ private enum EdgePathGeometry {
         }
     }
 
-    private func sampledPoints() -> [CGPoint] {
+    func sampledPoints() -> [CGPoint] {
         switch self {
         case let .curve(geometry):
             geometry.sampledPoints(steps: 24)
         case let .routed(geometry):
             geometry.sampledPoints()
+        }
+    }
+
+    var axisAlignedSegments: [ExpandedEdgeLaneOccupancy.Segment] {
+        sampledPoints().adjacentPairs().compactMap { start, end in
+            ExpandedEdgeLaneOccupancy.Segment(start: start, end: end)
         }
     }
 }
@@ -1116,6 +1321,84 @@ private struct EdgeRoutedGeometry {
 
     func sampledPoints() -> [CGPoint] {
         points
+    }
+}
+
+struct ExpandedEdgeLaneOccupancy {
+    struct Segment: Hashable {
+        enum Orientation: Hashable {
+            case horizontal
+            case vertical
+        }
+
+        let orientation: Orientation
+        let laneValue: CGFloat
+        let lowerBound: CGFloat
+        let upperBound: CGFloat
+
+        init?(start: CGPoint, end: CGPoint) {
+            let deltaX = end.x - start.x
+            let deltaY = end.y - start.y
+            let axisTolerance: CGFloat = 1
+
+            if abs(deltaX) <= axisTolerance, abs(deltaY) > axisTolerance {
+                orientation = .vertical
+                laneValue = start.x
+                lowerBound = min(start.y, end.y)
+                upperBound = max(start.y, end.y)
+            } else if abs(deltaY) <= axisTolerance, abs(deltaX) > axisTolerance {
+                orientation = .horizontal
+                laneValue = start.y
+                lowerBound = min(start.x, end.x)
+                upperBound = max(start.x, end.x)
+            } else {
+                return nil
+            }
+        }
+
+        var length: CGFloat {
+            upperBound - lowerBound
+        }
+
+        func overlapPenalty(with other: Segment) -> CGFloat {
+            guard orientation == other.orientation else { return 0 }
+
+            let laneDistance = abs(laneValue - other.laneValue)
+            let laneThreshold: CGFloat = 12
+            guard laneDistance < laneThreshold else { return 0 }
+
+            let overlapLength = min(upperBound, other.upperBound) - max(lowerBound, other.lowerBound)
+            guard overlapLength > 8 else { return 0 }
+
+            let proximityWeight = 1 + (laneThreshold - laneDistance) / 4
+            return overlapLength * proximityWeight + 28
+        }
+    }
+
+    private var segments: [Segment] = []
+
+    fileprivate mutating func record(_ geometry: EdgePathGeometry) {
+        segments.append(contentsOf: geometry.axisAlignedSegments)
+    }
+
+    mutating func record(points: [CGPoint]) {
+        segments.append(contentsOf: points.adjacentPairs().compactMap { Segment(start: $0.0, end: $0.1) })
+    }
+
+    fileprivate func overlapPenalty(for geometry: EdgePathGeometry) -> CGFloat {
+        overlapPenalty(for: geometry.axisAlignedSegments)
+    }
+
+    func overlapPenalty(for points: [CGPoint]) -> CGFloat {
+        overlapPenalty(for: points.adjacentPairs().compactMap { Segment(start: $0.0, end: $0.1) })
+    }
+
+    private func overlapPenalty(for candidateSegments: [Segment]) -> CGFloat {
+        candidateSegments.reduce(into: 0) { partialResult, candidate in
+            partialResult += segments.reduce(into: 0) { innerResult, occupied in
+                innerResult += candidate.overlapPenalty(with: occupied)
+            }
+        }
     }
 }
 
