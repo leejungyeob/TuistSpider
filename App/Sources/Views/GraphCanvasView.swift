@@ -26,6 +26,7 @@ struct GraphCanvasView: View {
     let selectedLevel: Int
     let connectionPaths: [SpiderGraphConnectionPath]
     let hasConnectionPathContext: Bool
+    let focusRequestID: Int
     @Binding var zoomScale: Double
 
     @GestureState private var gestureZoomScale: CGFloat = 1
@@ -77,6 +78,27 @@ struct GraphCanvasView: View {
         )
     }
 
+    private var contentFocusRect: CGRect? {
+        switch presentationMode {
+        case .expanded:
+            let targetNodeID = focusedNodeID ?? subgraph.nodes.first?.id
+            guard let targetNodeID, let frame = layout.nodeFrames[targetNodeID] else { return nil }
+            return scaledContentRect(for: frame)
+        case .grouped:
+            let targetLevel: Int? = {
+                if levelLayout.groupFrames[selectedLevel] != nil { return selectedLevel }
+                if let focusedNodeID, let level = subgraph.levels[focusedNodeID], levelLayout.groupFrames[level] != nil {
+                    return level
+                }
+                if levelLayout.groupFrames[0] != nil { return 0 }
+                return levelGroups.first?.level
+            }()
+
+            guard let targetLevel, let frame = levelLayout.groupFrames[targetLevel] else { return nil }
+            return scaledContentRect(for: frame)
+        }
+    }
+
     var body: some View {
         if subgraph.nodes.isEmpty {
             ContentUnavailableView(
@@ -89,6 +111,8 @@ struct GraphCanvasView: View {
             ZStack(alignment: .topTrailing) {
                 InteractiveCanvasScrollView(
                     zoomScale: $zoomScale,
+                    focusRect: contentFocusRect,
+                    focusRequestID: focusRequestID,
                     contentSize: CGSize(
                         width: scaledCanvasSize.width + 48,
                         height: scaledCanvasSize.height + 48
@@ -230,20 +254,46 @@ struct GraphCanvasView: View {
         min(max(value, TuistSpiderViewModel.zoomScaleRange.lowerBound), TuistSpiderViewModel.zoomScaleRange.upperBound)
     }
 
+    private func scaledContentRect(for frame: CGRect) -> CGRect {
+        CGRect(
+            x: 24 + frame.origin.x * effectiveZoomScale,
+            y: 24 + frame.origin.y * effectiveZoomScale,
+            width: frame.width * effectiveZoomScale,
+            height: frame.height * effectiveZoomScale
+        )
+    }
+
     @ViewBuilder
     private func expandedEdgeView(edge: SpiderGraphEdge, from: CGRect, to: CGRect) -> some View {
         let matchingPaths = edgeConnectionPaths[edge.id] ?? []
+        let geometry = EdgeCurveGeometry(from: from, to: to)
+        let baseColor = baseEdgeColor(for: edge, matchingPaths: matchingPaths)
+        let baseStroke = baseEdgeStrokeStyle(for: edge)
 
         ZStack {
-            EdgeShape(from: from, to: to)
-                .stroke(baseEdgeColor(for: edge, matchingPaths: matchingPaths), style: baseEdgeStrokeStyle(for: edge))
+            EdgeShape(geometry: geometry)
+                .stroke(baseColor, style: baseStroke)
+
+            EdgeArrowHead(
+                geometry: geometry,
+                color: baseArrowColor(for: edge, matchingPaths: matchingPaths),
+                size: baseArrowSize(for: edge)
+            )
 
             ForEach(Array(matchingPaths.enumerated()), id: \.element.id) { index, path in
-                EdgeShape(from: from, to: to)
+                let color = GraphPathPalette.color(at: path.paletteIndex).opacity(0.98)
+
+                EdgeShape(geometry: geometry)
                     .stroke(
-                        GraphPathPalette.color(at: path.paletteIndex).opacity(0.98),
+                        color,
                         style: highlightedEdgeStrokeStyle(rank: index, total: matchingPaths.count)
                     )
+
+                EdgeArrowHead(
+                    geometry: geometry,
+                    color: color,
+                    size: 12 + CGFloat(max(0, matchingPaths.count - index - 1))
+                )
             }
         }
     }
@@ -286,6 +336,20 @@ struct GraphCanvasView: View {
         let outerWidth: CGFloat = total == 1 ? 4.5 : 4.5 + CGFloat(total - 1) * 2.25
         let width = max(2.4, outerWidth - CGFloat(rank) * 2.25)
         return StrokeStyle(lineWidth: width, lineCap: .round)
+    }
+
+    private func baseArrowColor(for edge: SpiderGraphEdge, matchingPaths: [SpiderGraphConnectionPath]) -> Color {
+        if let primaryPath = matchingPaths.first {
+            return GraphPathPalette.color(at: primaryPath.paletteIndex).opacity(0.94)
+        }
+        return baseEdgeColor(for: edge, matchingPaths: matchingPaths).opacity(0.9)
+    }
+
+    private func baseArrowSize(for edge: SpiderGraphEdge) -> CGFloat {
+        if hasConnectionPathContext, edge.from != focusedNodeID, edge.to != focusedNodeID {
+            return 8
+        }
+        return 10
     }
 }
 
@@ -355,21 +419,97 @@ private struct GraphNodeCard: View {
 }
 
 private struct EdgeShape: Shape {
-    let from: CGRect
-    let to: CGRect
+    let geometry: EdgeCurveGeometry
+
+    init(from: CGRect, to: CGRect) {
+        geometry = EdgeCurveGeometry(from: from, to: to)
+    }
+
+    init(geometry: EdgeCurveGeometry) {
+        self.geometry = geometry
+    }
 
     func path(in _: CGRect) -> Path {
+        var path = Path()
+        path.move(to: geometry.start)
+        path.addCurve(
+            to: geometry.end,
+            control1: geometry.control1,
+            control2: geometry.control2
+        )
+        return path
+    }
+}
+
+private struct EdgeCurveGeometry {
+    let start: CGPoint
+    let end: CGPoint
+    let control1: CGPoint
+    let control2: CGPoint
+
+    init(from: CGRect, to: CGRect) {
         let start = CGPoint(x: from.maxX, y: from.midY)
         let end = CGPoint(x: to.minX, y: to.midY)
         let deltaX = max((end.x - start.x) * 0.45, 36)
 
-        var path = Path()
-        path.move(to: start)
-        path.addCurve(
-            to: end,
-            control1: CGPoint(x: start.x + deltaX, y: start.y),
-            control2: CGPoint(x: end.x - deltaX, y: end.y)
+        self.start = start
+        self.end = end
+        self.control1 = CGPoint(x: start.x + deltaX, y: start.y)
+        self.control2 = CGPoint(x: end.x - deltaX, y: end.y)
+    }
+
+    var arrowAngle: CGFloat {
+        atan2(end.y - control2.y, end.x - control2.x)
+    }
+
+    func arrowTip(inset: CGFloat = 4) -> CGPoint {
+        CGPoint(
+            x: end.x - cos(arrowAngle) * inset,
+            y: end.y - sin(arrowAngle) * inset
         )
+    }
+}
+
+private struct EdgeArrowHead: View {
+    let geometry: EdgeCurveGeometry
+    let color: Color
+    let size: CGFloat
+
+    var body: some View {
+        ArrowHeadShape(
+            tip: geometry.arrowTip(),
+            angle: geometry.arrowAngle,
+            size: size
+        )
+        .fill(color)
+    }
+}
+
+private struct ArrowHeadShape: Shape {
+    let tip: CGPoint
+    let angle: CGFloat
+    let size: CGFloat
+
+    func path(in _: CGRect) -> Path {
+        let wingAngle = CGFloat.pi / 6
+        let left = CGPoint(
+            x: tip.x - cos(angle - wingAngle) * size,
+            y: tip.y - sin(angle - wingAngle) * size
+        )
+        let right = CGPoint(
+            x: tip.x - cos(angle + wingAngle) * size,
+            y: tip.y - sin(angle + wingAngle) * size
+        )
+        let back = CGPoint(
+            x: tip.x - cos(angle) * size * 0.58,
+            y: tip.y - sin(angle) * size * 0.58
+        )
+
+        var path = Path()
+        path.move(to: tip)
+        path.addLine(to: left)
+        path.addQuadCurve(to: right, control: back)
+        path.closeSubpath()
         return path
     }
 }
@@ -438,12 +578,20 @@ private struct LevelEdgeView: View {
     let isSelected: Bool
 
     var body: some View {
+        let geometry = EdgeCurveGeometry(from: from, to: to)
+
         ZStack {
-            EdgeShape(from: from, to: to)
+            EdgeShape(geometry: geometry)
                 .stroke(
                     isSelected ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.22),
                     style: StrokeStyle(lineWidth: isSelected ? 3 : 2, lineCap: .round)
                 )
+
+            EdgeArrowHead(
+                geometry: geometry,
+                color: isSelected ? Color.accentColor.opacity(0.82) : Color.secondary.opacity(0.32),
+                size: isSelected ? 11 : 9
+            )
 
             Text("\(edge.edgeCount)")
                 .font(.caption2.weight(.bold))
@@ -465,22 +613,33 @@ private struct LevelEdgeView: View {
 
 private struct InteractiveCanvasScrollView<Content: View>: NSViewRepresentable {
     @Binding var zoomScale: Double
+    let focusRect: CGRect?
+    let focusRequestID: Int
     let contentSize: CGSize
     let content: Content
 
     init(
         zoomScale: Binding<Double>,
+        focusRect: CGRect?,
+        focusRequestID: Int,
         contentSize: CGSize,
         @ViewBuilder content: () -> Content
     ) {
         _zoomScale = zoomScale
+        self.focusRect = focusRect
+        self.focusRequestID = focusRequestID
         self.contentSize = contentSize
         self.content = content()
     }
 
     func makeNSView(context _: Context) -> CanvasInteractionScrollView {
         let scrollView = CanvasInteractionScrollView()
-        scrollView.install(content: AnyView(content), contentSize: contentSize)
+        scrollView.install(
+            content: AnyView(content),
+            contentSize: contentSize,
+            focusRect: focusRect,
+            focusRequestID: focusRequestID
+        )
         return scrollView
     }
 
@@ -489,7 +648,12 @@ private struct InteractiveCanvasScrollView<Content: View>: NSViewRepresentable {
         nsView.onZoomScaleChange = { newScale in
             self.zoomScale = newScale
         }
-        nsView.update(content: AnyView(content), contentSize: contentSize)
+        nsView.update(
+            content: AnyView(content),
+            contentSize: contentSize,
+            focusRect: focusRect,
+            focusRequestID: focusRequestID
+        )
     }
 }
 
@@ -505,6 +669,9 @@ private final class CanvasInteractionScrollView: NSScrollView {
     private let documentContainerView = CenteringDocumentView(frame: .zero)
     private let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
     private var currentContentSize: CGSize = .zero
+    private var pendingFocusRect: CGRect?
+    private var pendingFocusRequestID = 0
+    private var appliedFocusRequestID = -1
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -551,6 +718,7 @@ private final class CanvasInteractionScrollView: NSScrollView {
     override func layout() {
         super.layout()
         updateDocumentLayout()
+        applyPendingViewportFocusIfNeeded()
     }
 
     override func reflectScrolledClipView(_ cView: NSClipView) {
@@ -558,17 +726,23 @@ private final class CanvasInteractionScrollView: NSScrollView {
         updateDocumentLayout()
     }
 
-    func install(content: AnyView, contentSize: CGSize) {
+    func install(content: AnyView, contentSize: CGSize, focusRect: CGRect?, focusRequestID: Int) {
         hostingView.rootView = content
         currentContentSize = contentSize
+        pendingFocusRect = focusRect
+        pendingFocusRequestID = focusRequestID
         updateDocumentLayout()
+        applyPendingViewportFocusIfNeeded()
     }
 
-    func update(content: AnyView, contentSize: CGSize) {
+    func update(content: AnyView, contentSize: CGSize, focusRect: CGRect?, focusRequestID: Int) {
         hostingView.rootView = content
         currentContentSize = contentSize
+        pendingFocusRect = focusRect
+        pendingFocusRequestID = focusRequestID
         updateDocumentLayout()
         hostingView.layoutSubtreeIfNeeded()
+        applyPendingViewportFocusIfNeeded()
     }
 
     private func updateDocumentLayout() {
@@ -587,6 +761,30 @@ private final class CanvasInteractionScrollView: NSScrollView {
             origin: CGPoint(x: originX, y: originY),
             size: currentContentSize
         )
+    }
+
+    private func applyPendingViewportFocusIfNeeded() {
+        guard pendingFocusRequestID != appliedFocusRequestID else { return }
+        guard contentView.bounds.width > 0, contentView.bounds.height > 0 else { return }
+
+        appliedFocusRequestID = pendingFocusRequestID
+
+        guard let pendingFocusRect else { return }
+
+        let documentFocusRect = pendingFocusRect.offsetBy(
+            dx: hostingView.frame.minX,
+            dy: hostingView.frame.minY
+        )
+        let targetOrigin = CGPoint(
+            x: documentFocusRect.midX - contentView.bounds.width * 0.5,
+            y: documentFocusRect.midY - contentView.bounds.height * 0.5
+        )
+        let constrainedBounds = contentView.constrainBoundsRect(
+            CGRect(origin: targetOrigin, size: contentView.bounds.size)
+        )
+
+        contentView.scroll(to: constrainedBounds.origin)
+        super.reflectScrolledClipView(contentView)
     }
 
     private func installEventMonitorsIfNeeded() {

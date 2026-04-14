@@ -60,6 +60,7 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published private(set) var sourceLabel = "Sample graph / normalized-sample"
     @Published private(set) var currentProjectURL: URL?
     @Published private(set) var currentJSONURL: URL?
+    @Published private(set) var viewportCenterRequestID = 0
     @Published var presentedError: SpiderGraphImportError?
 
     private let exportService = TuistGraphExportService()
@@ -68,6 +69,7 @@ final class TuistSpiderViewModel: ObservableObject {
     init() {
         restorePreferences()
         selectedNodeID = selectedNodeID ?? graph.preferredRootID
+        requestViewportCentering()
     }
 
     var filteredNodes: [SpiderGraphNode] {
@@ -165,6 +167,21 @@ final class TuistSpiderViewModel: ObservableObject {
         connectionPaths.filter { activeConnectionPathIDs.contains($0.id) }
     }
 
+    var connectionDirection: SpiderGraphRelationshipDirection? {
+        guard
+            let focusedNodeID = selectedNodeID,
+            let graphSelectedNodeID = visibleGraphSelectedNodeID
+        else {
+            return nil
+        }
+
+        return graph.relationshipDirection(
+            from: focusedNodeID,
+            to: graphSelectedNodeID,
+            restrictedTo: Set(visibleSubgraph.nodes.map(\.id))
+        )
+    }
+
     var activeConnectionPathNodeIDs: Set<String> {
         Set(activeConnectionPaths.flatMap(\.nodeIDs))
     }
@@ -258,6 +275,7 @@ final class TuistSpiderViewModel: ObservableObject {
         resetConnectionPathSelection()
         selectedLevel = 0
         selectedNodeID = graph.preferredRootID
+        requestViewportCentering()
         statusMessage = "뷰를 초기화했습니다."
     }
 
@@ -266,6 +284,7 @@ final class TuistSpiderViewModel: ObservableObject {
         graphSelectedNodeID = nil
         resetConnectionPathSelection()
         selectedLevel = 0
+        requestViewportCentering()
     }
 
     func selectGraphNode(_ nodeID: String) {
@@ -383,6 +402,7 @@ final class TuistSpiderViewModel: ObservableObject {
         self.graphSelectedNodeID = nil
         resetConnectionPathSelection()
         self.selectedLevel = 0
+        requestViewportCentering()
 
         if resetViewport {
             self.zoomScale = Self.defaultZoomScale
@@ -430,6 +450,10 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private func resetConnectionPathSelection() {
         selectedConnectionPathIDs = nil
+    }
+
+    private func requestViewportCentering() {
+        viewportCenterRequestID &+= 1
     }
 
     private enum PreferencesKey: String {

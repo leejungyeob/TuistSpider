@@ -117,6 +117,39 @@ enum GraphPresentationMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum SpiderGraphRelationshipDirection: Sendable {
+    case focusedDependsOnSelection
+    case selectionDependsOnFocused
+    case bidirectional
+    case mixed
+
+    var badgeText: String {
+        switch self {
+        case .focusedDependsOnSelection:
+            return "기준 -> 선택"
+        case .selectionDependsOnFocused:
+            return "기준 <- 선택"
+        case .bidirectional:
+            return "기준 <-> 선택"
+        case .mixed:
+            return "혼합 경로"
+        }
+    }
+
+    func description(focusedName: String, selectedName: String) -> String {
+        switch self {
+        case .focusedDependsOnSelection:
+            return "\(focusedName)이(가) \(selectedName)에 의존합니다."
+        case .selectionDependsOnFocused:
+            return "\(selectedName)이(가) \(focusedName)에 의존합니다."
+        case .bidirectional:
+            return "\(focusedName)과 \(selectedName) 사이에 순환 의존이 있습니다."
+        case .mixed:
+            return "단일 방향으로 이어진 경로가 아니라 공통 의존/역의존이 섞인 연결입니다."
+        }
+    }
+}
+
 struct SpiderGraphSubgraph: Sendable {
     let nodes: [SpiderGraphNode]
     let edges: [SpiderGraphEdge]
@@ -570,6 +603,39 @@ struct SpiderGraph: Hashable, Sendable {
         return SpiderGraphSubgraph(nodes: nodes, edges: edges, levels: levels)
     }
 
+    func relationshipDirection(
+        from focusedNodeID: String,
+        to selectedNodeID: String,
+        restrictedTo allowedNodeIDs: Set<String>? = nil
+    ) -> SpiderGraphRelationshipDirection? {
+        let allowedNodeIDs = allowedNodeIDs ?? Set(nodeMap.keys)
+        guard allowedNodeIDs.contains(focusedNodeID), allowedNodeIDs.contains(selectedNodeID) else {
+            return nil
+        }
+
+        let focusedDependsOnSelection = hasDirectedPath(
+            from: focusedNodeID,
+            to: selectedNodeID,
+            allowedNodeIDs: allowedNodeIDs
+        )
+        let selectionDependsOnFocused = hasDirectedPath(
+            from: selectedNodeID,
+            to: focusedNodeID,
+            allowedNodeIDs: allowedNodeIDs
+        )
+
+        switch (focusedDependsOnSelection, selectionDependsOnFocused) {
+        case (true, true):
+            return .bidirectional
+        case (true, false):
+            return .focusedDependsOnSelection
+        case (false, true):
+            return .selectionDependsOnFocused
+        case (false, false):
+            return .mixed
+        }
+    }
+
     private func bfs(
         from startID: String,
         adjacency: [String: [String]],
@@ -595,6 +661,33 @@ struct SpiderGraph: Hashable, Sendable {
         }
 
         return seen
+    }
+
+    private func hasDirectedPath(
+        from startID: String,
+        to endID: String,
+        allowedNodeIDs: Set<String>
+    ) -> Bool {
+        guard startID != endID else { return true }
+
+        var queue = [startID]
+        var seen = Set([startID])
+        var index = 0
+
+        while index < queue.count {
+            let nodeID = queue[index]
+            index += 1
+
+            for nextID in outgoing[nodeID] ?? [] {
+                guard allowedNodeIDs.contains(nextID), seen.insert(nextID).inserted else { continue }
+                if nextID == endID {
+                    return true
+                }
+                queue.append(nextID)
+            }
+        }
+
+        return false
     }
 
     static func nodeSort(_ lhs: SpiderGraphNode, _ rhs: SpiderGraphNode) -> Bool {

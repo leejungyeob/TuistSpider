@@ -164,6 +164,7 @@ struct ContentView: View {
                 selectedLevel: viewModel.selectedLevel,
                 connectionPaths: viewModel.activeConnectionPaths,
                 hasConnectionPathContext: viewModel.graphSelectedNode != nil && !viewModel.connectionPaths.isEmpty,
+                focusRequestID: viewModel.viewportCenterRequestID,
                 zoomScale: $viewModel.zoomScale,
                 onSelect: { nodeID in
                     viewModel.selectGraphNode(nodeID)
@@ -328,6 +329,30 @@ struct ContentView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
+            if let relationship = viewModel.connectionDirection {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("의존성 방향")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(relationship.badgeText)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(directionColor(for: relationship))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(directionColor(for: relationship).opacity(0.14), in: Capsule())
+
+                        Text(relationship.description(focusedName: focusedNode.name, selectedName: targetNode.name))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(12)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+
             HStack(spacing: 8) {
                 Button("전체 보기") {
                     viewModel.showAllConnectionPaths()
@@ -445,6 +470,19 @@ struct ContentView: View {
             return "기준 모듈을 참조하는 모듈들의 \(abs(value))단계 계층입니다."
         default:
             return "기준 모듈이 의존하는 모듈들의 \(level)단계 계층입니다."
+        }
+    }
+
+    private func directionColor(for relationship: SpiderGraphRelationshipDirection) -> Color {
+        switch relationship {
+        case .focusedDependsOnSelection:
+            return .blue
+        case .selectionDependsOnFocused:
+            return .green
+        case .bidirectional:
+            return .orange
+        case .mixed:
+            return .purple
         }
     }
 }
