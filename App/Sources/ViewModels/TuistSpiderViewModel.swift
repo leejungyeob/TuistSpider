@@ -24,6 +24,7 @@ final class TuistSpiderViewModel: ObservableObject {
     static let connectionPathLimitStep = 12
     static let connectionPathExtraHops = 3
     static let unclassifiedLayerTitle = "Unclassified"
+    static let automaticUpdateCheckInterval: TimeInterval = 60 * 60 * 12
 
     @Published private(set) var graph = SampleGraph.make()
     @Published var selectedNodeID: String? {
@@ -118,6 +119,8 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published private(set) var currentJSONURL: URL?
     @Published private(set) var viewportCenterRequestID = 0
     @Published var presentedError: SpiderGraphImportError?
+    @Published private(set) var availableAppUpdate: AppUpdateRelease?
+    @Published private(set) var isCheckingForUpdates = false
     @Published private(set) var visibleSubgraph = SpiderGraphSubgraph.empty
     @Published private(set) var directDependencies: [SpiderGraphNode] = []
     @Published private(set) var directDependents: [SpiderGraphNode] = []
@@ -128,8 +131,10 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published private(set) var displayedSubgraph = SpiderGraphSubgraph.empty
 
     private let exportService = TuistGraphExportService()
+    private let updateService = AppUpdateService()
     private let preferences = UserDefaults.standard
     private var isRestoringPreferences = false
+    private var hasPerformedInitialUpdateCheck = false
 
     init() {
         restorePreferences(for: graph)
@@ -305,6 +310,20 @@ final class TuistSpiderViewModel: ObservableObject {
             return "\(baseName)-\(modeName)-\(sanitizeFileNameComponent(selectedNode.name)).png"
         }
         return "\(baseName)-\(modeName).png"
+    }
+
+    var currentAppVersion: String {
+        if let marketingVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+           !marketingVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return marketingVersion
+        }
+
+        if let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+           !buildVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return buildVersion
+        }
+
+        return "0"
     }
 
     var zoomPercentageLabel: String {
@@ -564,6 +583,30 @@ final class TuistSpiderViewModel: ObservableObject {
         statusMessage = "PNG 저장에 실패했습니다."
     }
 
+    func checkForUpdatesIfNeeded() async {
+        guard !hasPerformedInitialUpdateCheck else { return }
+        hasPerformedInitialUpdateCheck = true
+        guard shouldPerformAutomaticUpdateCheck() else { return }
+        await performUpdateCheck(userInitiated: false, ignoreSkippedVersion: false)
+    }
+
+    func checkForUpdatesManually() {
+        Task {
+            await performUpdateCheck(userInitiated: true, ignoreSkippedVersion: true)
+        }
+    }
+
+    func dismissAvailableUpdate() {
+        availableAppUpdate = nil
+    }
+
+    func skipAvailableUpdate() {
+        guard let availableAppUpdate else { return }
+        preferences.set(availableAppUpdate.version, forKey: PreferencesKey.skippedAppUpdateVersion.rawValue)
+        self.availableAppUpdate = nil
+        statusMessage = "\(availableAppUpdate.displayVersion) 업데이트 알림을 숨겼습니다."
+    }
+
     private func loadProject(at url: URL) {
         isLoading = true
         statusMessage = "Tuist 그래프를 생성하는 중입니다..."
@@ -806,6 +849,48 @@ final class TuistSpiderViewModel: ObservableObject {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private func performUpdateCheck(userInitiated: Bool, ignoreSkippedVersion: Bool) async {
+        guard !isCheckingForUpdates else { return }
+        isCheckingForUpdates = true
+        defer { isCheckingForUpdates = false }
+
+        do {
+            let skippedVersion = ignoreSkippedVersion
+                ? nil
+                : preferences.string(forKey: PreferencesKey.skippedAppUpdateVersion.rawValue)
+            let result = try await updateService.checkForUpdates(
+                currentVersion: currentAppVersion,
+                skippedVersion: skippedVersion
+            )
+            preferences.set(Date(), forKey: PreferencesKey.lastAppUpdateCheckAt.rawValue)
+
+            switch result {
+            case let .updateAvailable(release):
+                availableAppUpdate = release
+                statusMessage = "새 버전 \(release.displayVersion)이 있습니다."
+            case let .upToDate(latestVersion):
+                if ignoreSkippedVersion || availableAppUpdate?.version == latestVersion {
+                    availableAppUpdate = nil
+                }
+                if userInitiated {
+                    statusMessage = "최신 버전입니다. (\(AppUpdateService.normalizeVersionString(latestVersion)))"
+                }
+            }
+        } catch {
+            if userInitiated {
+                presentedError = .processFailed("업데이트 확인에 실패했습니다. \(error.localizedDescription)")
+                statusMessage = "업데이트 확인에 실패했습니다."
+            }
+        }
+    }
+
+    private func shouldPerformAutomaticUpdateCheck(now: Date = Date()) -> Bool {
+        guard let lastCheckedAt = preferences.object(forKey: PreferencesKey.lastAppUpdateCheckAt.rawValue) as? Date else {
+            return true
+        }
+        return now.timeIntervalSince(lastCheckedAt) >= Self.automaticUpdateCheckInterval
+    }
+
     private func preferenceScopeID(for graph: SpiderGraph) -> String {
         graph.rootPath ?? "graph::\(graph.sourceFormat)::\(graph.graphName)"
     }
@@ -978,6 +1063,8 @@ final class TuistSpiderViewModel: ObservableObject {
         case selectedLevel
         case lastProjectPath
         case zoomScale
+        case skippedAppUpdateVersion
+        case lastAppUpdateCheckAt
     }
 }
 

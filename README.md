@@ -39,6 +39,8 @@ Most questions about a large dependency graph are not "show me everything."
 - Turn on `선택 경로만 보기` to hide everything except the currently active paths
 - Route edges around obstacles and reduce overlapping trunks when multiple paths pass through nearby lanes
 - See dependency direction directly on the graph
+- Save the current graph view as a PNG image
+- Check GitHub Releases from inside the app and jump straight to the latest download
 - Zoom and pan with native macOS controls
 
 ## Screenshots
@@ -176,6 +178,28 @@ Build a release ZIP:
   - enable `선택 경로만 보기` to keep only the active paths on screen
   - use `shift + click` on path rows to add or remove paths while path-only mode is on
   - load more paths step-by-step with `더 보기` when the current result is truncated
+
+### 7. Export the current graph as PNG
+
+- Click `PNG 저장` in the header
+- The export includes the current graph state:
+  - focused module
+  - direction / depth filters
+  - layer band layout
+  - current path highlights
+  - current presentation mode (`Expanded` or `Grouped`)
+- The app suggests a filename based on the graph name and current focus
+- PNG export renders the full graph canvas without the zoom controls overlay
+
+### 8. Check for app updates
+
+- Click `업데이트 확인` in the header for a manual check
+- TuistSpider also performs a lightweight automatic check against GitHub Releases
+- When a newer version exists, the app shows a banner with:
+  - `나중에`
+  - `건너뛰기`
+  - `다운로드`
+- If a release contains a DMG asset, TuistSpider opens that first
 
 ## Controls
 

@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var viewModel = TuistSpiderViewModel()
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(spacing: 0) {
@@ -12,6 +13,14 @@ struct ContentView: View {
                 .padding(.vertical, 14)
 
             Divider()
+
+            if let update = viewModel.availableAppUpdate {
+                updateBanner(update)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+
+                Divider()
+            }
 
             HSplitView {
                 sidebar
@@ -36,6 +45,9 @@ struct ContentView: View {
                 title: Text("작업 실패"),
                 message: Text(error.errorDescription ?? "알 수 없는 오류입니다.")
             )
+        }
+        .task {
+            await viewModel.checkForUpdatesIfNeeded()
         }
     }
 
@@ -66,6 +78,11 @@ struct ContentView: View {
             }
             .disabled(viewModel.currentProjectURL == nil && viewModel.lastProjectPath == nil)
 
+            Button(viewModel.isCheckingForUpdates ? "확인 중..." : "업데이트 확인") {
+                viewModel.checkForUpdatesManually()
+            }
+            .disabled(viewModel.isCheckingForUpdates)
+
             Button("PNG 저장") {
                 exportCurrentGraphAsPNG()
             }
@@ -75,6 +92,47 @@ struct ContentView: View {
                 viewModel.loadSample()
             }
         }
+    }
+
+    private func updateBanner(_ update: AppUpdateRelease) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.title2)
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("새 버전 \(update.displayVersion) 사용 가능")
+                    .font(.headline)
+                Text(update.displayTitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 16)
+
+            Button("나중에") {
+                viewModel.dismissAvailableUpdate()
+            }
+            .buttonStyle(.bordered)
+
+            Button("건너뛰기") {
+                viewModel.skipAvailableUpdate()
+            }
+            .buttonStyle(.bordered)
+
+            Button("다운로드") {
+                openURL(update.downloadURL)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.18), lineWidth: 1)
+        )
     }
 
     private var sidebar: some View {
