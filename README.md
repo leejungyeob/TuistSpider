@@ -1,6 +1,6 @@
 # TuistSpider
 
-![TuistSpider banner](./assets/branding/hero-banner.svg)
+![TuistSpider banner](./assets/branding/hero-banner.png)
 
 Inspect only the part of a Tuist dependency graph you actually care about.
 
@@ -133,11 +133,11 @@ Build a distributable app zip:
 
 ### Focused graph exploration
 
-![TuistSpider overview](./assets/screenshots/overview.svg)
+![TuistSpider overview](./assets/screenshots/overview.png)
 
 ### Multi-path connection tracing
 
-![TuistSpider multi-paths](./assets/screenshots/multi-paths.svg)
+![TuistSpider multi-paths](./assets/screenshots/multi-paths.png)
 
 ## Usage
 

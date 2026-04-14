@@ -480,9 +480,7 @@ private struct InteractiveCanvasScrollView<Content: View>: NSViewRepresentable {
 
     func makeNSView(context _: Context) -> CanvasInteractionScrollView {
         let scrollView = CanvasInteractionScrollView()
-        let hostingView = NSHostingView(rootView: AnyView(content))
-        hostingView.frame = CGRect(origin: .zero, size: contentSize)
-        scrollView.documentView = hostingView
+        scrollView.install(content: AnyView(content), contentSize: contentSize)
         return scrollView
     }
 
@@ -491,12 +489,7 @@ private struct InteractiveCanvasScrollView<Content: View>: NSViewRepresentable {
         nsView.onZoomScaleChange = { newScale in
             self.zoomScale = newScale
         }
-
-        if let hostingView = nsView.documentView as? NSHostingView<AnyView> {
-            hostingView.rootView = AnyView(content)
-            hostingView.frame = CGRect(origin: .zero, size: contentSize)
-            hostingView.layoutSubtreeIfNeeded()
-        }
+        nsView.update(content: AnyView(content), contentSize: contentSize)
     }
 }
 
@@ -509,6 +502,9 @@ private final class CanvasInteractionScrollView: NSScrollView {
     private var isPanning = false
     private var lastPanLocation: NSPoint?
     private var isCursorPushed = false
+    private let documentContainerView = CenteringDocumentView(frame: .zero)
+    private let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
+    private var currentContentSize: CGSize = .zero
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -541,6 +537,54 @@ private final class CanvasInteractionScrollView: NSScrollView {
         autohidesScrollers = true
         borderType = .noBorder
         scrollerStyle = .overlay
+
+        documentContainerView.wantsLayer = true
+        documentContainerView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        documentContainerView.addSubview(hostingView)
+        documentView = documentContainerView
+    }
+
+    override func layout() {
+        super.layout()
+        updateDocumentLayout()
+    }
+
+    override func reflectScrolledClipView(_ cView: NSClipView) {
+        super.reflectScrolledClipView(cView)
+        updateDocumentLayout()
+    }
+
+    func install(content: AnyView, contentSize: CGSize) {
+        hostingView.rootView = content
+        currentContentSize = contentSize
+        updateDocumentLayout()
+    }
+
+    func update(content: AnyView, contentSize: CGSize) {
+        hostingView.rootView = content
+        currentContentSize = contentSize
+        updateDocumentLayout()
+        hostingView.layoutSubtreeIfNeeded()
+    }
+
+    private func updateDocumentLayout() {
+        let visibleSize = contentView.bounds.size
+        let containerWidth = max(currentContentSize.width, visibleSize.width)
+        let containerHeight = max(currentContentSize.height, visibleSize.height)
+
+        documentContainerView.frame = CGRect(
+            origin: .zero,
+            size: CGSize(width: containerWidth, height: containerHeight)
+        )
+
+        let originX = max((containerWidth - currentContentSize.width) * 0.5, 0)
+        let originY = max((containerHeight - currentContentSize.height) * 0.5, 0)
+        hostingView.frame = CGRect(
+            origin: CGPoint(x: originX, y: originY),
+            size: currentContentSize
+        )
     }
 
     private func installEventMonitorsIfNeeded() {
@@ -681,4 +725,8 @@ private final class CanvasInteractionScrollView: NSScrollView {
         let localPoint = convert(point, from: nil)
         return bounds.contains(localPoint)
     }
+}
+
+private final class CenteringDocumentView: NSView {
+    override var isFlipped: Bool { true }
 }
