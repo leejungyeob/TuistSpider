@@ -4,6 +4,7 @@ let project = Project(
     name: "TuistSpider",
     settings: .settings(
         base: [
+            "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
             "CODE_SIGNING_ALLOWED": "NO",
             "CODE_SIGNING_REQUIRED": "NO",
             "CODE_SIGN_IDENTITY": "",
@@ -15,8 +16,13 @@ let project = Project(
             destinations: [.mac],
             product: .app,
             bundleId: "com.leejungyeob.TuistSpider",
-            infoPlist: .default,
-            sources: ["App/Sources/**"]
+            infoPlist: .extendingDefault(
+                with: [
+                    "LSApplicationCategoryType": "public.app-category.developer-tools",
+                ]
+            ),
+            sources: ["App/Sources/**"],
+            resources: ["App/Resources/**"]
         ),
     ]
 )

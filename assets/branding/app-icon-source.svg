@@ -1,0 +1,62 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="170" y1="122" x2="846" y2="914" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1B2030"/>
+      <stop offset="1" stop-color="#0F131C"/>
+    </linearGradient>
+    <radialGradient id="glowBlue" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(312 286) rotate(65.2249) scale(286.533 255.441)">
+      <stop stop-color="#74B3FF" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#74B3FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowMint" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(710 262) rotate(121.287) scale(248.101 212.853)">
+      <stop stop-color="#64F0CF" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#64F0CF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowAmber" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(520 748) rotate(90) scale(256.667 240.864)">
+      <stop stop-color="#FFD08A" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#FFD08A" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="76" y="84" width="872" height="896" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="28"/>
+      <feGaussianBlur stdDeviation="40"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.0235294 0 0 0 0 0.0352941 0 0 0 0 0.0627451 0 0 0 0.38 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
+    </filter>
+    <linearGradient id="linkBlue" x1="374" y1="372" x2="604" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4091FF"/>
+      <stop offset="1" stop-color="#77BDFF"/>
+    </linearGradient>
+    <linearGradient id="linkMint" x1="589" y1="385" x2="543" y2="601" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#33E4B6"/>
+      <stop offset="1" stop-color="#85F5D4"/>
+    </linearGradient>
+    <linearGradient id="linkAmber" x1="430" y1="401" x2="517" y2="632" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFB650"/>
+      <stop offset="1" stop-color="#FFD996"/>
+    </linearGradient>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <rect x="158" y="140" width="708" height="708" rx="176" fill="url(#bg)"/>
+    <rect x="175" y="157" width="674" height="674" rx="160" stroke="white" stroke-opacity="0.06" stroke-width="2"/>
+  </g>
+
+  <circle cx="314" cy="320" r="180" fill="url(#glowBlue)"/>
+  <circle cx="718" cy="286" r="164" fill="url(#glowMint)"/>
+  <circle cx="520" cy="734" r="176" fill="url(#glowAmber)"/>
+
+  <path d="M362 382C430 362 500 362 570 380" stroke="url(#linkBlue)" stroke-width="42" stroke-linecap="round"/>
+  <path d="M626 360C600 438 562 520 528 612" stroke="url(#linkMint)" stroke-width="42" stroke-linecap="round"/>
+  <path d="M388 408C434 488 470 552 500 624" stroke="url(#linkAmber)" stroke-width="42" stroke-linecap="round"/>
+
+  <circle cx="324" cy="376" r="118" fill="#1F3E73" stroke="#5FA7FF" stroke-width="14"/>
+  <circle cx="642" cy="372" r="104" fill="#173E45" stroke="#63EDC8" stroke-width="14"/>
+  <circle cx="514" cy="662" r="112" fill="#4F3317" stroke="#FFCB7E" stroke-width="14"/>
+
+  <circle cx="324" cy="376" r="58" fill="#4EA0FF"/>
+  <circle cx="642" cy="372" r="52" fill="#4BE5BE"/>
+  <circle cx="514" cy="662" r="56" fill="#FFBD67"/>
+</svg>

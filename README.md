@@ -49,10 +49,10 @@ Releases:
 
 1. Open the [Releases page](https://github.com/leejungyeob/TuistSpider/releases)
 2. Open the latest release
-3. Under `Assets`, download `TuistSpider.app.zip`
-4. Unzip the file
-5. Move `TuistSpider.app` into `Applications`
-6. Launch the app
+3. Under `Assets`, download `TuistSpider.dmg`
+4. Open the DMG
+5. Drag `TuistSpider.app` into `Applications`
+6. Launch the app from `Applications`
 
 If macOS blocks the app because it is unsigned:
 
@@ -66,29 +66,32 @@ If you prefer Terminal, you can also remove quarantine manually:
 xattr -dr com.apple.quarantine /Applications/TuistSpider.app
 ```
 
+macOS apps normally do not auto-copy themselves into `Applications`.
+The standard distribution flow is a DMG that shows the app next to the `Applications` shortcut.
+
 ## App-Only Distribution
 
 Yes. Users do not need to clone the repo or build from source.
 
 The recommended flow is:
 
-1. Build a release zip
-2. Upload that zip to GitHub Releases
+1. Build a release DMG
+2. Upload that DMG to GitHub Releases
 3. Share the Releases link
 
 Release build command:
 
 ```bash
-./scripts/mac/build-release-zip.sh
+./scripts/mac/build-release-dmg.sh
 ```
 
 This creates:
 
 ```text
-dist/TuistSpider.app.zip
+dist/TuistSpider.dmg
 ```
 
-That single zip file is what users should download.
+That DMG file is the recommended download for end users.
 
 ### How To Publish A Release Asset
 
@@ -97,14 +100,14 @@ If you are uploading the app yourself:
 1. Run:
 
 ```bash
-./scripts/mac/build-release-zip.sh
+./scripts/mac/build-release-dmg.sh
 ```
 
 2. Open [GitHub Releases](https://github.com/leejungyeob/TuistSpider/releases)
 3. Click `Draft a new release`
 4. Create a tag such as `v0.1.0`
 5. Set a release title such as `TuistSpider v0.1.0`
-6. Upload `dist/TuistSpider.app.zip` to `Assets`
+6. Upload `dist/TuistSpider.dmg` to `Assets`
 7. Publish the release
 
 After that, users only need the Releases link.
@@ -123,10 +126,10 @@ Open the Xcode project instead:
 ./scripts/open_mac_app.sh
 ```
 
-Build a distributable app zip:
+Build a distributable DMG:
 
 ```bash
-./scripts/mac/build-release-zip.sh
+./scripts/mac/build-release-dmg.sh
 ```
 
 ## Screenshots
@@ -230,7 +233,9 @@ This project is licensed under the MIT License. See [LICENSE](./LICENSE).
 - `scripts/open_mac_app.sh`
   - generate + open Xcode project
 - `scripts/mac/build-release-zip.sh`
-  - build a Release `.app` and package it as a zip for GitHub Releases
+  - build a Release `.app` and package it as a plain zip
+- `scripts/mac/build-release-dmg.sh`
+  - build a Release `.app` and package it as a drag-to-Applications DMG
 - `examples/TuistFixture`
   - local sample Tuist project
 
@@ -240,12 +245,12 @@ This project is licensed under the MIT License. See [LICENSE](./LICENSE).
 2. Run:
 
 ```bash
-./scripts/mac/build-release-zip.sh
+./scripts/mac/build-release-dmg.sh
 ```
 
 3. Open GitHub `Releases`
 4. Create a new release
-5. Upload `dist/TuistSpider.app.zip`
+5. Upload `dist/TuistSpider.dmg`
 6. Share the release URL
 
-If you want, the next step can be automating this with GitHub Actions so every tag builds and uploads the app zip automatically.
+If you want, the next step can be automating this with GitHub Actions so every tag builds and uploads the DMG automatically.

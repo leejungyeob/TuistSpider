@@ -1,0 +1,40 @@
+<svg width="960" height="600" viewBox="0 0 960 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="36" y1="22" x2="892" y2="594" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F5F3FF"/>
+      <stop offset="0.48" stop-color="#F7F9FF"/>
+      <stop offset="1" stop-color="#FFF7EE"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="412" y1="314" x2="554" y2="314" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#CFD6E6"/>
+      <stop offset="1" stop-color="#AEB8CC"/>
+    </linearGradient>
+    <radialGradient id="glowLeft" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(216 128) rotate(75.6945) scale(142.708 188.769)">
+      <stop stop-color="#C9BBFF" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#C9BBFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowRight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(788 132) rotate(111.49) scale(166.676 213.706)">
+      <stop stop-color="#FFDDB8" stop-opacity="0.86"/>
+      <stop offset="1" stop-color="#FFDDB8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="960" height="600" rx="28" fill="url(#bg)"/>
+  <circle cx="184" cy="116" r="120" fill="url(#glowLeft)"/>
+  <circle cx="816" cy="118" r="144" fill="url(#glowRight)"/>
+
+  <text x="72" y="94" fill="#171C27" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="42" font-weight="700">
+    <tspan x="72" dy="0">Drag TuistSpider</tspan>
+    <tspan x="72" dy="52">into Applications</tspan>
+  </text>
+  <text x="72" y="186" fill="#596174" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="20" font-weight="500">
+    Install the app by dropping it onto the Applications folder.
+  </text>
+
+  <g opacity="0.86">
+    <rect x="404" y="292" width="28" height="28" rx="6" fill="#D7DDEB"/>
+    <rect x="442" y="292" width="28" height="28" rx="6" fill="#D7DDEB"/>
+    <rect x="480" y="292" width="28" height="28" rx="6" fill="#D7DDEB"/>
+    <path d="M520 276H548L580 308L548 340H520V322H468V294H520V276Z" fill="url(#arrow)"/>
+  </g>
+</svg>
