@@ -80,10 +80,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
+detach_existing_volume() {
+  existing_devices="$(
+    hdiutil info | awk -v volume_name="/Volumes/$VOLUME_NAME" '
+      $1 ~ /^\/dev\// { device = $1 }
+      index($0, volume_name) { print device }
+    ' | sort -u
+  )"
+
+  if [ -z "$existing_devices" ]; then
+    return
+  fi
+
+  printf 'Detaching previously mounted %s volume(s)\n' "$VOLUME_NAME"
+  printf '%s\n' "$existing_devices" | while IFS= read -r device; do
+    [ -n "$device" ] || continue
+    hdiutil detach "$device" -quiet || true
+  done
+}
+
 if [ ! -f "$BACKGROUND_PATH" ]; then
   echo "error: missing DMG background at $BACKGROUND_PATH" >&2
   exit 1
 fi
+
+detach_existing_volume
 
 mkdir -p "$STAGING_DIR/.background"
 cp -R "$APP_PATH" "$STAGING_DIR/TuistSpider.app"

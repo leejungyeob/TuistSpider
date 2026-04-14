@@ -277,22 +277,25 @@ struct GraphCanvasView: View {
             EdgeArrowHead(
                 geometry: geometry,
                 color: baseArrowColor(for: edge, matchingPaths: matchingPaths),
-                size: baseArrowSize(for: edge)
+                size: baseArrowSize(for: edge),
+                lineWidth: max(1.8, baseStroke.lineWidth * 0.92)
             )
 
             ForEach(Array(matchingPaths.enumerated()), id: \.element.id) { index, path in
                 let color = GraphPathPalette.color(at: path.paletteIndex).opacity(0.98)
+                let strokeStyle = highlightedEdgeStrokeStyle(rank: index, total: matchingPaths.count)
 
                 EdgeShape(geometry: geometry)
                     .stroke(
                         color,
-                        style: highlightedEdgeStrokeStyle(rank: index, total: matchingPaths.count)
+                        style: strokeStyle
                     )
 
                 EdgeArrowHead(
                     geometry: geometry,
                     color: color,
-                    size: 12 + CGFloat(max(0, matchingPaths.count - index - 1))
+                    size: 11 + CGFloat(max(0, matchingPaths.count - index - 1)),
+                    lineWidth: max(2, strokeStyle.lineWidth * 0.68)
                 )
             }
         }
@@ -474,18 +477,19 @@ private struct EdgeArrowHead: View {
     let geometry: EdgeCurveGeometry
     let color: Color
     let size: CGFloat
+    let lineWidth: CGFloat
 
     var body: some View {
-        ArrowHeadShape(
+        ArrowChevronShape(
             tip: geometry.arrowTip(),
             angle: geometry.arrowAngle,
             size: size
         )
-        .fill(color)
+        .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
     }
 }
 
-private struct ArrowHeadShape: Shape {
+private struct ArrowChevronShape: Shape {
     let tip: CGPoint
     let angle: CGFloat
     let size: CGFloat
@@ -500,16 +504,10 @@ private struct ArrowHeadShape: Shape {
             x: tip.x - cos(angle + wingAngle) * size,
             y: tip.y - sin(angle + wingAngle) * size
         )
-        let back = CGPoint(
-            x: tip.x - cos(angle) * size * 0.58,
-            y: tip.y - sin(angle) * size * 0.58
-        )
-
         var path = Path()
-        path.move(to: tip)
-        path.addLine(to: left)
-        path.addQuadCurve(to: right, control: back)
-        path.closeSubpath()
+        path.move(to: left)
+        path.addLine(to: tip)
+        path.addLine(to: right)
         return path
     }
 }
@@ -590,7 +588,8 @@ private struct LevelEdgeView: View {
             EdgeArrowHead(
                 geometry: geometry,
                 color: isSelected ? Color.accentColor.opacity(0.82) : Color.secondary.opacity(0.32),
-                size: isSelected ? 11 : 9
+                size: isSelected ? 10 : 8,
+                lineWidth: isSelected ? 2.4 : 1.8
             )
 
             Text("\(edge.edgeCount)")
