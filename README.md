@@ -1,5 +1,7 @@
 # TuistSpider
 
+[English](./README.md) | [한국어](./README.ko.md)
+
 ![TuistSpider banner](./assets/branding/hero-banner-readme.png)
 
 Native macOS graph explorer for large [Tuist](https://github.com/tuist/tuist) module graphs.
