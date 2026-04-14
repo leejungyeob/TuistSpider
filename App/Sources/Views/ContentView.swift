@@ -75,8 +75,12 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 16) {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField("모듈 검색", text: $viewModel.searchText)
-                        .textFieldStyle(.roundedBorder)
+                    ProminentInputField(
+                        title: "모듈 검색",
+                        placeholder: "이름, 프로젝트, 레이어로 검색",
+                        systemImage: "magnifyingglass",
+                        text: $viewModel.searchText
+                    )
 
                     Picker("방향", selection: $viewModel.direction) {
                         ForEach(GraphDirection.allCases) { direction in
@@ -126,6 +130,10 @@ struct ContentView: View {
                 }
             } label: {
                 Text("필터")
+            }
+
+            if let node = viewModel.inspectedNode, viewModel.canEditLayerClassification(for: node) {
+                layerEditingNotice(node: node)
             }
 
             HStack(spacing: 10) {
@@ -210,6 +218,10 @@ struct ContentView: View {
                             .textSelection(.enabled)
                     }
 
+                    if viewModel.canEditLayerClassification(for: node) {
+                        layerEditorSection(node: node)
+                    }
+
                     if let focusedNode = viewModel.selectedNode {
                         relatedNodeSearchSection(focusedNode: focusedNode)
                     }
@@ -227,9 +239,6 @@ struct ContentView: View {
 
                     dependencySection(title: "직접 의존성", nodes: viewModel.directDependencies)
                     dependencySection(title: "직접 역의존성", nodes: viewModel.directDependents)
-                    if viewModel.canEditLayerClassification(for: node) {
-                        layerEditorSection(node: node)
-                    }
                     metadataSection(node: node)
                 } else {
                     ContentUnavailableView(
@@ -502,11 +511,15 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            TextField("연관 노드 검색", text: $viewModel.relatedNodeSearchText)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit {
+            ProminentInputField(
+                title: "연관 노드 검색",
+                placeholder: "이름 또는 프로젝트명",
+                systemImage: "scope",
+                text: $viewModel.relatedNodeSearchText,
+                onSubmit: {
                     viewModel.selectFirstMatchingRelatedNode()
                 }
+            )
 
             if viewModel.relatedNodeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("이름이나 프로젝트명으로 검색하면 현재 그래프에 보이는 노드만 후보로 나옵니다.")
@@ -568,8 +581,41 @@ struct ContentView: View {
             metadataRow(title: "Bundle ID", value: node.bundleId ?? "-")
             metadataRow(title: "Sources", value: "\(node.sourceCount)")
             metadataRow(title: "Resources", value: "\(node.resourceCount)")
-            metadataRow(title: "Tags (read-only)", value: node.metadataTags.isEmpty ? "-" : node.metadataTags.joined(separator: ", "))
+            FlowTagSection(
+                title: "Tags (read-only)",
+                items: node.metadataTags,
+                emptyText: "metadata.tags 없음",
+                tint: .secondary
+            )
         }
+    }
+
+    private func layerEditingNotice(node: SpiderGraphNode) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "tag.fill")
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("레이어/태그 편집 가능")
+                    .font(.subheadline.weight(.semibold))
+                Text("\(node.name)의 레이어 분류는 우측 Inspector 상단에서 바로 수정됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    LayerBadge(layerName: node.primaryLayer)
+                    if node.hasSavedLayerOverride {
+                        StatusPill(title: "Saved Override", tint: .accentColor)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.16), lineWidth: 1)
+        )
     }
 
     private func levelLayerSummarySection(levelGroup: SpiderGraphLevelGroup) -> some View {
@@ -683,17 +729,21 @@ private struct LayerEditorSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text("레이어 분류")
+                Text("레이어/태그 편집")
                     .font(.headline)
                 Spacer()
                 if node.hasSavedLayerOverride {
-                    Text("Saved Override")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.accentColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                    StatusPill(title: "Saved Override", tint: .accentColor)
                 }
+            }
+
+            Text("적용값은 프로젝트 스냅샷에 저장되고, 자동 제안값과 다르면 override로 유지됩니다.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                StatusPill(title: "Applied · \(node.layerLabel)", tint: LayerColorPalette.color(for: node.primaryLayer))
+                StatusPill(title: "Suggested · \(node.suggestedLayerLabel)", tint: LayerColorPalette.color(for: node.suggestedLayer))
             }
 
             Picker("적용 레이어", selection: appliedLayerSelection) {
@@ -703,11 +753,22 @@ private struct LayerEditorSection: View {
                 }
             }
             .pickerStyle(.menu)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.16), lineWidth: 1)
+            )
 
             HStack(spacing: 8) {
-                TextField("Custom layer", text: $customLayerName)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(applyCustomLayer)
+                ProminentInputField(
+                    title: "커스텀 레이어",
+                    placeholder: "새 레이어 이름 입력",
+                    systemImage: "tag",
+                    text: $customLayerName,
+                    onSubmit: applyCustomLayer
+                )
 
                 Button("적용") {
                     applyCustomLayer()
@@ -715,6 +776,13 @@ private struct LayerEditorSection: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(normalizedCustomLayerName == nil || normalizedCustomLayerName == node.primaryLayer)
             }
+
+            FlowTagSection(
+                title: "metadata.tags",
+                items: node.metadataTags,
+                emptyText: "노출된 metadata.tags 없음",
+                tint: .secondary
+            )
 
             HStack(spacing: 8) {
                 Button("Reset to Suggested") {
@@ -728,6 +796,12 @@ private struct LayerEditorSection: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .padding(14)
+        .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.14), lineWidth: 1)
+        )
     }
 
     private var appliedLayerSelection: Binding<String> {
@@ -748,6 +822,112 @@ private struct LayerEditorSection: View {
         guard let normalizedCustomLayerName else { return }
         onApplyCustomLayer(normalizedCustomLayerName)
         customLayerName = ""
+    }
+}
+
+private struct ProminentInputField: View {
+    let title: String
+    let placeholder: String
+    let systemImage: String
+    @Binding var text: String
+    var onSubmit: (() -> Void)? = nil
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(isFocused ? Color.accentColor : .secondary)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isFocused ? Color.accentColor : .secondary)
+                Spacer()
+                if !text.isEmpty {
+                    Text("\(text.count)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 8) {
+                TextField(placeholder, text: $text)
+                    .textFieldStyle(.plain)
+                    .focused($isFocused)
+                    .onSubmit {
+                        onSubmit?()
+                    }
+
+                if !text.isEmpty {
+                    Button {
+                        text = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(isFocused ? 0.98 : 0.92), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isFocused ? Color.accentColor.opacity(0.75) : Color.secondary.opacity(0.22), lineWidth: isFocused ? 1.6 : 1)
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct FlowTagSection: View {
+    let title: String
+    let items: [String]
+    let emptyText: String
+    let tint: Color
+
+    private let columns = [GridItem(.adaptive(minimum: 92), spacing: 8)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if items.isEmpty {
+                Text(emptyText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                        StatusPill(title: item, tint: tint)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct StatusPill: View {
+    let title: String
+    let tint: Color
+
+    var body: some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(tint.opacity(0.14), in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(tint.opacity(0.18), lineWidth: 1)
+            )
     }
 }
 
