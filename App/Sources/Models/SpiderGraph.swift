@@ -154,6 +154,26 @@ struct SpiderGraphSubgraph: Sendable {
     let nodes: [SpiderGraphNode]
     let edges: [SpiderGraphEdge]
     let levels: [String: Int]
+    let nodeIDs: Set<String>
+    let levelGroups: [SpiderGraphLevelGroup]
+    let levelEdges: [SpiderGraphLevelEdge]
+    let canvasLayout: SpiderGraphCanvasLayout
+    let levelCanvasLayout: SpiderGraphLevelCanvasLayout
+    let edgeEndpoints: [String: SpiderGraphEdgeEndpoints]
+
+    init(nodes: [SpiderGraphNode], edges: [SpiderGraphEdge], levels: [String: Int]) {
+        self.nodes = nodes
+        self.edges = edges
+        self.levels = levels
+        self.nodeIDs = Set(nodes.map(\.id))
+        self.levelGroups = Self.makeLevelGroups(nodes: nodes, edges: edges, levels: levels)
+        self.levelEdges = Self.makeLevelEdges(edges: edges, levels: levels)
+        self.canvasLayout = SpiderGraphCanvasLayout.make(for: nodes, levels: levels)
+        self.levelCanvasLayout = SpiderGraphLevelCanvasLayout.make(for: self.levelGroups)
+        self.edgeEndpoints = Self.makeEdgeEndpoints(edges: edges, layout: canvasLayout)
+    }
+
+    static let empty = SpiderGraphSubgraph(nodes: [], edges: [], levels: [:])
 
     func connectionPaths(
         from startID: String,
@@ -278,7 +298,11 @@ struct SpiderGraphSubgraph: Sendable {
         return distances
     }
 
-    var levelGroups: [SpiderGraphLevelGroup] {
+    private static func makeLevelGroups(
+        nodes: [SpiderGraphNode],
+        edges: [SpiderGraphEdge],
+        levels: [String: Int]
+    ) -> [SpiderGraphLevelGroup] {
         var groupedNodes: [Int: [SpiderGraphNode]] = [:]
         for node in nodes {
             groupedNodes[levels[node.id] ?? 0, default: []].append(node)
@@ -299,7 +323,10 @@ struct SpiderGraphSubgraph: Sendable {
         }
     }
 
-    var levelEdges: [SpiderGraphLevelEdge] {
+    private static func makeLevelEdges(
+        edges: [SpiderGraphEdge],
+        levels: [String: Int]
+    ) -> [SpiderGraphLevelEdge] {
         var counts: [SpiderGraphLevelPair: Int] = [:]
 
         for edge in edges {
@@ -320,6 +347,112 @@ struct SpiderGraphSubgraph: Sendable {
             if lhs.fromLevel != rhs.fromLevel { return lhs.fromLevel < rhs.fromLevel }
             return lhs.toLevel < rhs.toLevel
         }
+    }
+
+    private static func makeEdgeEndpoints(
+        edges: [SpiderGraphEdge],
+        layout: SpiderGraphCanvasLayout
+    ) -> [String: SpiderGraphEdgeEndpoints] {
+        struct EdgeLayoutInput {
+            let edge: SpiderGraphEdge
+            let fromFrame: CGRect
+            let toFrame: CGRect
+            let sourceSide: SpiderGraphAnchorSide
+            let targetSide: SpiderGraphAnchorSide
+        }
+
+        let inputs: [EdgeLayoutInput] = edges.compactMap { edge in
+            guard
+                let fromFrame = layout.nodeFrames[edge.from],
+                let toFrame = layout.nodeFrames[edge.to]
+            else {
+                return nil
+            }
+
+            let sourceSide: SpiderGraphAnchorSide = fromFrame.midX <= toFrame.midX ? .right : .left
+            let targetSide: SpiderGraphAnchorSide = sourceSide == .right ? .left : .right
+            return EdgeLayoutInput(
+                edge: edge,
+                fromFrame: fromFrame,
+                toFrame: toFrame,
+                sourceSide: sourceSide,
+                targetSide: targetSide
+            )
+        }
+
+        var sourceOffsets: [String: CGFloat] = [:]
+        var targetOffsets: [String: CGFloat] = [:]
+
+        let sourceGroups = Dictionary(grouping: inputs) { input in
+            SpiderGraphEdgePortKey(nodeID: input.edge.from, side: input.sourceSide)
+        }
+        let targetGroups = Dictionary(grouping: inputs) { input in
+            SpiderGraphEdgePortKey(nodeID: input.edge.to, side: input.targetSide)
+        }
+
+        for group in sourceGroups.values {
+            let sorted = group.sorted { lhs, rhs in
+                edgeSortTuple(
+                    counterpartFrame: lhs.toFrame,
+                    counterpartNodeID: lhs.edge.to,
+                    edgeID: lhs.edge.id
+                ) < edgeSortTuple(
+                    counterpartFrame: rhs.toFrame,
+                    counterpartNodeID: rhs.edge.to,
+                    edgeID: rhs.edge.id
+                )
+            }
+
+            for (index, input) in sorted.enumerated() {
+                sourceOffsets[input.edge.id] = portOffset(index: index, count: sorted.count, frame: input.fromFrame)
+            }
+        }
+
+        for group in targetGroups.values {
+            let sorted = group.sorted { lhs, rhs in
+                edgeSortTuple(
+                    counterpartFrame: lhs.fromFrame,
+                    counterpartNodeID: lhs.edge.from,
+                    edgeID: lhs.edge.id
+                ) < edgeSortTuple(
+                    counterpartFrame: rhs.fromFrame,
+                    counterpartNodeID: rhs.edge.from,
+                    edgeID: rhs.edge.id
+                )
+            }
+
+            for (index, input) in sorted.enumerated() {
+                targetOffsets[input.edge.id] = portOffset(index: index, count: sorted.count, frame: input.toFrame)
+            }
+        }
+
+        return inputs.reduce(into: [:]) { endpoints, input in
+            let start = input.sourceSide.anchorPoint(
+                in: input.fromFrame,
+                yOffset: sourceOffsets[input.edge.id] ?? 0
+            )
+            let end = input.targetSide.anchorPoint(
+                in: input.toFrame,
+                yOffset: targetOffsets[input.edge.id] ?? 0
+            )
+            endpoints[input.edge.id] = SpiderGraphEdgeEndpoints(start: start, end: end)
+        }
+    }
+
+    private static func edgeSortTuple(
+        counterpartFrame: CGRect,
+        counterpartNodeID: String,
+        edgeID: String
+    ) -> (CGFloat, CGFloat, String, String) {
+        (counterpartFrame.midY, counterpartFrame.midX, counterpartNodeID, edgeID)
+    }
+
+    private static func portOffset(index: Int, count: Int, frame: CGRect) -> CGFloat {
+        guard count > 1 else { return 0 }
+        let halfSpan = CGFloat(count - 1) / 2
+        let maxSpread = min(frame.height * 0.32, 26)
+        let step = min(12, maxSpread / max(halfSpan, 1))
+        return (CGFloat(index) - halfSpan) * step
     }
 }
 
@@ -391,9 +524,31 @@ struct SpiderGraphLevelEdge: Identifiable, Hashable, Sendable {
     var id: String { "\(fromLevel)->\(toLevel)" }
 }
 
+struct SpiderGraphEdgeEndpoints: Hashable, Sendable {
+    let start: CGPoint
+    let end: CGPoint
+}
+
 private struct SpiderGraphLevelPair: Hashable, Sendable {
     let fromLevel: Int
     let toLevel: Int
+}
+
+private struct SpiderGraphEdgePortKey: Hashable, Sendable {
+    let nodeID: String
+    let side: SpiderGraphAnchorSide
+}
+
+enum SpiderGraphAnchorSide: Hashable, Sendable {
+    case left
+    case right
+
+    func anchorPoint(in frame: CGRect, yOffset: CGFloat) -> CGPoint {
+        CGPoint(
+            x: self == .right ? frame.maxX : frame.minX,
+            y: frame.midY + yOffset
+        )
+    }
 }
 
 struct SpiderGraphCanvasLayout: Sendable {

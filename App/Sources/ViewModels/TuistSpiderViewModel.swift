@@ -18,12 +18,14 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published var direction: GraphDirection = .both {
         didSet {
             resetConnectionPathSelection()
+            refreshDerivedState()
             persistPreferences()
         }
     }
     @Published var depth: GraphDepth = .all {
         didSet {
             resetConnectionPathSelection()
+            refreshDerivedState()
             persistPreferences()
         }
     }
@@ -36,6 +38,7 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published var includeExternal = false {
         didSet {
             resetConnectionPathSelection()
+            refreshDerivedState()
             persistPreferences()
         }
     }
@@ -62,6 +65,12 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published private(set) var currentJSONURL: URL?
     @Published private(set) var viewportCenterRequestID = 0
     @Published var presentedError: SpiderGraphImportError?
+    @Published private(set) var visibleSubgraph = SpiderGraphSubgraph.empty
+    @Published private(set) var directDependencies: [SpiderGraphNode] = []
+    @Published private(set) var directDependents: [SpiderGraphNode] = []
+    @Published private(set) var connectionPaths: [SpiderGraphConnectionPath] = []
+    @Published private(set) var hasTruncatedConnectionPaths = false
+    @Published private(set) var connectionDirection: SpiderGraphRelationshipDirection?
 
     private let exportService = TuistGraphExportService()
     private let preferences = UserDefaults.standard
@@ -69,6 +78,7 @@ final class TuistSpiderViewModel: ObservableObject {
     init() {
         restorePreferences()
         selectedNodeID = selectedNodeID ?? graph.preferredRootID
+        refreshDerivedState()
         requestViewportCentering()
     }
 
@@ -97,7 +107,7 @@ final class TuistSpiderViewModel: ObservableObject {
 
     var visibleGraphSelectedNodeID: String? {
         guard let graphSelectedNodeID else { return nil }
-        return visibleSubgraph.nodes.contains(where: { $0.id == graphSelectedNodeID }) ? graphSelectedNodeID : nil
+        return visibleSubgraph.nodeIDs.contains(graphSelectedNodeID) ? graphSelectedNodeID : nil
     }
 
     var inspectedNode: SpiderGraphNode? {
@@ -105,46 +115,6 @@ final class TuistSpiderViewModel: ObservableObject {
             return graph.nodeMap[visibleGraphSelectedNodeID]
         }
         return selectedNode
-    }
-
-    var visibleSubgraph: SpiderGraphSubgraph {
-        guard let selectedNodeID else {
-            return SpiderGraphSubgraph(nodes: [], edges: [], levels: [:])
-        }
-        return graph.subgraph(centeredOn: selectedNodeID, direction: direction, depth: depth, includeExternal: includeExternal)
-    }
-
-    var directDependencies: [SpiderGraphNode] {
-        guard let inspectedNodeID = inspectedNode?.id else { return [] }
-        return graph.directDependencies(of: inspectedNodeID, includeExternal: includeExternal)
-    }
-
-    var directDependents: [SpiderGraphNode] {
-        guard let inspectedNodeID = inspectedNode?.id else { return [] }
-        return graph.directDependents(of: inspectedNodeID, includeExternal: includeExternal)
-    }
-
-    private var connectionPathResult: SpiderGraphConnectionPathResult? {
-        guard
-            let focusedNodeID = selectedNodeID,
-            let graphSelectedNodeID = visibleGraphSelectedNodeID
-        else {
-            return nil
-        }
-        return visibleSubgraph.connectionPaths(
-            from: focusedNodeID,
-            to: graphSelectedNodeID,
-            maxPaths: Self.maxConnectionPaths,
-            maxExtraHops: Self.connectionPathExtraHops
-        )
-    }
-
-    var connectionPaths: [SpiderGraphConnectionPath] {
-        connectionPathResult?.paths ?? []
-    }
-
-    var hasTruncatedConnectionPaths: Bool {
-        connectionPathResult?.isTruncated == true
     }
 
     var activeConnectionPathIDs: Set<String> {
@@ -165,21 +135,6 @@ final class TuistSpiderViewModel: ObservableObject {
 
     var activeConnectionPaths: [SpiderGraphConnectionPath] {
         connectionPaths.filter { activeConnectionPathIDs.contains($0.id) }
-    }
-
-    var connectionDirection: SpiderGraphRelationshipDirection? {
-        guard
-            let focusedNodeID = selectedNodeID,
-            let graphSelectedNodeID = visibleGraphSelectedNodeID
-        else {
-            return nil
-        }
-
-        return graph.relationshipDirection(
-            from: focusedNodeID,
-            to: graphSelectedNodeID,
-            restrictedTo: Set(visibleSubgraph.nodes.map(\.id))
-        )
     }
 
     var activeConnectionPathNodeIDs: Set<String> {
@@ -275,6 +230,7 @@ final class TuistSpiderViewModel: ObservableObject {
         resetConnectionPathSelection()
         selectedLevel = 0
         selectedNodeID = graph.preferredRootID
+        refreshDerivedState()
         requestViewportCentering()
         statusMessage = "뷰를 초기화했습니다."
     }
@@ -284,6 +240,7 @@ final class TuistSpiderViewModel: ObservableObject {
         graphSelectedNodeID = nil
         resetConnectionPathSelection()
         selectedLevel = 0
+        refreshDerivedState()
         requestViewportCentering()
     }
 
@@ -291,10 +248,12 @@ final class TuistSpiderViewModel: ObservableObject {
         guard nodeID != selectedNodeID else {
             graphSelectedNodeID = nil
             resetConnectionPathSelection()
+            refreshDerivedState()
             return
         }
         graphSelectedNodeID = graphSelectedNodeID == nodeID ? nil : nodeID
         resetConnectionPathSelection()
+        refreshDerivedState()
     }
 
     func selectLevel(_ level: Int) {
@@ -402,6 +361,7 @@ final class TuistSpiderViewModel: ObservableObject {
         self.graphSelectedNodeID = nil
         resetConnectionPathSelection()
         self.selectedLevel = 0
+        refreshDerivedState()
         requestViewportCentering()
 
         if resetViewport {
@@ -450,6 +410,70 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private func resetConnectionPathSelection() {
         selectedConnectionPathIDs = nil
+    }
+
+    private func refreshDerivedState() {
+        refreshVisibleSubgraph()
+        refreshInspectorState()
+    }
+
+    private func refreshVisibleSubgraph() {
+        guard let selectedNodeID else {
+            visibleSubgraph = .empty
+            return
+        }
+
+        visibleSubgraph = graph.subgraph(
+            centeredOn: selectedNodeID,
+            direction: direction,
+            depth: depth,
+            includeExternal: includeExternal
+        )
+
+        if let graphSelectedNodeID, !visibleSubgraph.nodeIDs.contains(graphSelectedNodeID) {
+            self.graphSelectedNodeID = nil
+        }
+
+        if visibleSubgraph.levelGroups.contains(where: { $0.level == selectedLevel }) == false {
+            selectedLevel = visibleSubgraph.levelGroups.first(where: { $0.level == 0 })?.level
+                ?? visibleSubgraph.levelGroups.first?.level
+                ?? 0
+        }
+    }
+
+    private func refreshInspectorState() {
+        if let inspectedNodeID = inspectedNode?.id {
+            directDependencies = graph.directDependencies(of: inspectedNodeID, includeExternal: includeExternal)
+            directDependents = graph.directDependents(of: inspectedNodeID, includeExternal: includeExternal)
+        } else {
+            directDependencies = []
+            directDependents = []
+        }
+
+        guard
+            let focusedNodeID = selectedNodeID,
+            let graphSelectedNodeID = visibleGraphSelectedNodeID
+        else {
+            connectionPaths = []
+            hasTruncatedConnectionPaths = false
+            connectionDirection = nil
+            return
+        }
+
+        let connectionPathResult = visibleSubgraph.connectionPaths(
+            from: focusedNodeID,
+            to: graphSelectedNodeID,
+            maxPaths: Self.maxConnectionPaths,
+            maxExtraHops: Self.connectionPathExtraHops
+        )
+
+        connectionPaths = connectionPathResult?.paths ?? []
+        hasTruncatedConnectionPaths = connectionPathResult?.isTruncated == true
+        connectionDirection = graph.relationshipDirection(
+            from: focusedNodeID,
+            to: graphSelectedNodeID,
+            restrictedTo: visibleSubgraph.nodeIDs
+        )
     }
 
     private func requestViewportCentering() {

@@ -35,7 +35,7 @@ struct GraphCanvasView: View {
     let onSelectLevel: (Int) -> Void
 
     private var layout: SpiderGraphCanvasLayout {
-        SpiderGraphCanvasLayout.make(for: subgraph.nodes, levels: subgraph.levels)
+        subgraph.canvasLayout
     }
 
     private var levelGroups: [SpiderGraphLevelGroup] {
@@ -43,7 +43,7 @@ struct GraphCanvasView: View {
     }
 
     private var levelLayout: SpiderGraphLevelCanvasLayout {
-        SpiderGraphLevelCanvasLayout.make(for: levelGroups)
+        subgraph.levelCanvasLayout
     }
 
     private var activePathNodeIDs: Set<String> {
@@ -78,101 +78,56 @@ struct GraphCanvasView: View {
         )
     }
 
-    private var expandedEdgeEndpoints: [String: EdgeEndpoints] {
-        struct EdgeLayoutInput {
-            let edge: SpiderGraphEdge
-            let fromFrame: CGRect
-            let toFrame: CGRect
-            let sourceSide: GraphAnchorSide
-            let targetSide: GraphAnchorSide
-        }
+    private var expandedEdgeRenderModels: [ExpandedEdgeRenderModel] {
+        subgraph.edges.compactMap { edge in
+            guard let endpoints = subgraph.edgeEndpoints[edge.id] else { return nil }
 
-        let inputs: [EdgeLayoutInput] = subgraph.edges.compactMap { edge in
+            let matchingPaths = edgeConnectionPaths[edge.id] ?? []
+            let geometry = EdgeCurveGeometry(start: endpoints.start, end: endpoints.end)
+            let baseArrowSize = baseArrowSize(for: edge)
+            let baseLayer = ExpandedEdgeLayer(
+                geometry: geometry,
+                color: baseEdgeColor(for: edge, matchingPaths: matchingPaths),
+                strokeStyle: baseEdgeStrokeStyle(for: edge),
+                arrowColor: baseArrowColor(for: edge, matchingPaths: matchingPaths),
+                arrowSize: baseArrowSize
+            )
+
+            let highlights = matchingPaths.enumerated().map { index, path in
+                let color = GraphPathPalette.color(at: path.paletteIndex).opacity(0.98)
+                let arrowSize = 11 + CGFloat(max(0, matchingPaths.count - index - 1))
+                return ExpandedEdgeLayer(
+                    geometry: geometry,
+                    color: color,
+                    strokeStyle: highlightedEdgeStrokeStyle(rank: index, total: matchingPaths.count),
+                    arrowColor: color,
+                    arrowSize: arrowSize
+                )
+            }
+
+            return ExpandedEdgeRenderModel(id: edge.id, base: baseLayer, highlights: highlights)
+        }
+    }
+
+    private var groupedEdgeRenderModels: [GroupedEdgeRenderModel] {
+        subgraph.levelEdges.compactMap { edge in
             guard
-                let fromFrame = layout.nodeFrames[edge.from],
-                let toFrame = layout.nodeFrames[edge.to]
+                let from = levelLayout.groupFrames[edge.fromLevel],
+                let to = levelLayout.groupFrames[edge.toLevel]
             else {
                 return nil
             }
 
-            let sourceSide: GraphAnchorSide = fromFrame.midX <= toFrame.midX ? .right : .left
-            let targetSide: GraphAnchorSide = sourceSide == .right ? .left : .right
-            return EdgeLayoutInput(
-                edge: edge,
-                fromFrame: fromFrame,
-                toFrame: toFrame,
-                sourceSide: sourceSide,
-                targetSide: targetSide
+            let geometry = EdgeCurveGeometry(from: from, to: to)
+            return GroupedEdgeRenderModel(
+                id: edge.id,
+                geometry: geometry,
+                strokeColor: edge.fromLevel == selectedLevel || edge.toLevel == selectedLevel ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.22),
+                arrowColor: edge.fromLevel == selectedLevel || edge.toLevel == selectedLevel ? Color.accentColor.opacity(0.82) : Color.secondary.opacity(0.4),
+                lineWidth: edge.fromLevel == selectedLevel || edge.toLevel == selectedLevel ? 3 : 2,
+                arrowSize: edge.fromLevel == selectedLevel || edge.toLevel == selectedLevel ? 10 : 8
             )
         }
-
-        var sourceOffsets: [String: CGFloat] = [:]
-        var targetOffsets: [String: CGFloat] = [:]
-
-        let sourceGroups = Dictionary(grouping: inputs) { input in
-            EdgePortKey(nodeID: input.edge.from, side: input.sourceSide)
-        }
-        let targetGroups = Dictionary(grouping: inputs) { input in
-            EdgePortKey(nodeID: input.edge.to, side: input.targetSide)
-        }
-
-        for (key, group) in sourceGroups {
-            let sorted = group.sorted { lhs, rhs in
-                edgeSortTuple(
-                    counterpartFrame: lhs.toFrame,
-                    counterpartNodeID: lhs.edge.to,
-                    edgeID: lhs.edge.id
-                ) < edgeSortTuple(
-                    counterpartFrame: rhs.toFrame,
-                    counterpartNodeID: rhs.edge.to,
-                    edgeID: rhs.edge.id
-                )
-            }
-
-            for (index, input) in sorted.enumerated() {
-                sourceOffsets[input.edge.id] = portOffset(
-                    index: index,
-                    count: sorted.count,
-                    frame: key.side == .left ? input.fromFrame : input.fromFrame
-                )
-            }
-        }
-
-        for (key, group) in targetGroups {
-            let sorted = group.sorted { lhs, rhs in
-                edgeSortTuple(
-                    counterpartFrame: lhs.fromFrame,
-                    counterpartNodeID: lhs.edge.from,
-                    edgeID: lhs.edge.id
-                ) < edgeSortTuple(
-                    counterpartFrame: rhs.fromFrame,
-                    counterpartNodeID: rhs.edge.from,
-                    edgeID: rhs.edge.id
-                )
-            }
-
-            for (index, input) in sorted.enumerated() {
-                targetOffsets[input.edge.id] = portOffset(
-                    index: index,
-                    count: sorted.count,
-                    frame: key.side == .left ? input.toFrame : input.toFrame
-                )
-            }
-        }
-
-        var endpoints: [String: EdgeEndpoints] = [:]
-        for input in inputs {
-            let start = input.sourceSide.anchorPoint(
-                in: input.fromFrame,
-                yOffset: sourceOffsets[input.edge.id] ?? 0
-            )
-            let end = input.targetSide.anchorPoint(
-                in: input.toFrame,
-                yOffset: targetOffsets[input.edge.id] ?? 0
-            )
-            endpoints[input.edge.id] = EdgeEndpoints(start: start, end: end)
-        }
-        return endpoints
     }
 
     private var contentFocusRect: CGRect? {
@@ -240,15 +195,11 @@ struct GraphCanvasView: View {
 
     private var expandedCanvasContent: some View {
         ZStack(alignment: .topLeading) {
-            ForEach(subgraph.edges) { edge in
-                if
-                    let from = layout.nodeFrames[edge.from],
-                    let to = layout.nodeFrames[edge.to],
-                    let endpoints = expandedEdgeEndpoints[edge.id]
-                {
-                    expandedEdgeView(edge: edge, from: from, to: to, endpoints: endpoints)
-                }
+            Canvas(rendersAsynchronously: true) { context, _ in
+                drawExpandedEdges(in: context)
             }
+            .allowsHitTesting(false)
+            .frame(width: layout.canvasSize.width, height: layout.canvasSize.height)
 
             ForEach(subgraph.nodes) { node in
                 if let frame = layout.nodeFrames[node.id] {
@@ -269,14 +220,24 @@ struct GraphCanvasView: View {
 
     private var groupedCanvasContent: some View {
         ZStack(alignment: .topLeading) {
+            Canvas(rendersAsynchronously: true) { context, _ in
+                drawGroupedEdges(in: context)
+            }
+            .allowsHitTesting(false)
+            .frame(width: levelLayout.canvasSize.width, height: levelLayout.canvasSize.height)
+
             ForEach(subgraph.levelEdges) { edge in
                 if let from = levelLayout.groupFrames[edge.fromLevel], let to = levelLayout.groupFrames[edge.toLevel] {
-                    LevelEdgeView(
-                        edge: edge,
-                        from: from,
-                        to: to,
-                        isSelected: edge.fromLevel == selectedLevel || edge.toLevel == selectedLevel
-                    )
+                    Text("\(edge.edgeCount)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(edge.fromLevel == selectedLevel || edge.toLevel == selectedLevel ? Color.accentColor : Color.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(.regularMaterial, in: Capsule())
+                        .position(
+                            x: (from.maxX + to.minX) / 2,
+                            y: (from.midY + to.midY) / 2 - 16
+                        )
                 }
             }
 
@@ -364,47 +325,6 @@ struct GraphCanvasView: View {
         )
     }
 
-    @ViewBuilder
-    private func expandedEdgeView(edge: SpiderGraphEdge, from: CGRect, to: CGRect, endpoints: EdgeEndpoints) -> some View {
-        let matchingPaths = edgeConnectionPaths[edge.id] ?? []
-        let geometry = EdgeCurveGeometry(start: endpoints.start, end: endpoints.end)
-        let baseColor = baseEdgeColor(for: edge, matchingPaths: matchingPaths)
-        let baseStroke = baseEdgeStrokeStyle(for: edge)
-        let baseArrowSize = baseArrowSize(for: edge)
-        let baseArrowInset = arrowLineInset(for: baseArrowSize)
-        let baseLineGeometry = geometry.trimmedEnd(by: baseArrowInset)
-
-        ZStack {
-            EdgeShape(geometry: baseLineGeometry)
-                .stroke(baseColor, style: baseStroke)
-
-            EdgeArrowHead(
-                geometry: geometry,
-                color: baseArrowColor(for: edge, matchingPaths: matchingPaths),
-                size: baseArrowSize
-            )
-
-            ForEach(Array(matchingPaths.enumerated()), id: \.element.id) { index, path in
-                let color = GraphPathPalette.color(at: path.paletteIndex).opacity(0.98)
-                let strokeStyle = highlightedEdgeStrokeStyle(rank: index, total: matchingPaths.count)
-                let arrowSize = 11 + CGFloat(max(0, matchingPaths.count - index - 1))
-                let lineGeometry = geometry.trimmedEnd(by: arrowLineInset(for: arrowSize))
-
-                EdgeShape(geometry: lineGeometry)
-                    .stroke(
-                        color,
-                        style: strokeStyle
-                    )
-
-                EdgeArrowHead(
-                    geometry: geometry,
-                    color: color,
-                    size: arrowSize
-                )
-            }
-        }
-    }
-
     private func baseEdgeColor(for edge: SpiderGraphEdge, matchingPaths: [SpiderGraphConnectionPath]) -> Color {
         let isFocusedEdge = edge.from == focusedNodeID || edge.to == focusedNodeID
         let isGraphSelectedEdge = edge.from == graphSelectedNodeID || edge.to == graphSelectedNodeID
@@ -463,16 +383,45 @@ struct GraphCanvasView: View {
         max(7, arrowSize + 1.5)
     }
 
-    private func edgeSortTuple(counterpartFrame: CGRect, counterpartNodeID: String, edgeID: String) -> (CGFloat, CGFloat, String, String) {
-        (counterpartFrame.midY, counterpartFrame.midX, counterpartNodeID, edgeID)
+    private func drawExpandedEdges(in context: GraphicsContext) {
+        for model in expandedEdgeRenderModels {
+            var layerContext = context
+            drawEdgeLayer(model.base, in: &layerContext)
+            for highlight in model.highlights {
+                drawEdgeLayer(highlight, in: &layerContext)
+            }
+        }
     }
 
-    private func portOffset(index: Int, count: Int, frame: CGRect) -> CGFloat {
-        guard count > 1 else { return 0 }
-        let halfSpan = CGFloat(count - 1) / 2
-        let maxSpread = min(frame.height * 0.32, 26)
-        let step = min(12, maxSpread / max(halfSpan, 1))
-        return (CGFloat(index) - halfSpan) * step
+    private func drawGroupedEdges(in context: GraphicsContext) {
+        let context = context
+        for model in groupedEdgeRenderModels {
+            let linePath = EdgeShape(geometry: model.geometry.trimmedEnd(by: arrowLineInset(for: model.arrowSize))).path(in: .zero)
+            context.stroke(
+                linePath,
+                with: .color(model.strokeColor),
+                style: StrokeStyle(lineWidth: model.lineWidth, lineCap: .round)
+            )
+
+            let arrowPath = ArrowHeadShape(
+                tip: model.geometry.arrowTip(),
+                angle: model.geometry.arrowAngle,
+                size: model.arrowSize
+            ).path(in: .zero)
+            context.fill(arrowPath, with: .color(model.arrowColor))
+        }
+    }
+
+    private func drawEdgeLayer(_ layer: ExpandedEdgeLayer, in context: inout GraphicsContext) {
+        let linePath = EdgeShape(geometry: layer.geometry.trimmedEnd(by: arrowLineInset(for: layer.arrowSize))).path(in: .zero)
+        context.stroke(linePath, with: .color(layer.color), style: layer.strokeStyle)
+
+        let arrowPath = ArrowHeadShape(
+            tip: layer.geometry.arrowTip(),
+            angle: layer.geometry.arrowAngle,
+            size: layer.arrowSize
+        ).path(in: .zero)
+        context.fill(arrowPath, with: .color(layer.arrowColor))
     }
 }
 
@@ -541,6 +490,29 @@ private struct GraphNodeCard: View {
     }
 }
 
+private struct ExpandedEdgeRenderModel: Identifiable {
+    let id: String
+    let base: ExpandedEdgeLayer
+    let highlights: [ExpandedEdgeLayer]
+}
+
+private struct ExpandedEdgeLayer {
+    let geometry: EdgeCurveGeometry
+    let color: Color
+    let strokeStyle: StrokeStyle
+    let arrowColor: Color
+    let arrowSize: CGFloat
+}
+
+private struct GroupedEdgeRenderModel: Identifiable {
+    let id: String
+    let geometry: EdgeCurveGeometry
+    let strokeColor: Color
+    let arrowColor: Color
+    let lineWidth: CGFloat
+    let arrowSize: CGFloat
+}
+
 private struct EdgeShape: Shape {
     let geometry: EdgeCurveGeometry
 
@@ -561,28 +533,6 @@ private struct EdgeShape: Shape {
             control2: geometry.control2
         )
         return path
-    }
-}
-
-private struct EdgeEndpoints {
-    let start: CGPoint
-    let end: CGPoint
-}
-
-private struct EdgePortKey: Hashable {
-    let nodeID: String
-    let side: GraphAnchorSide
-}
-
-private enum GraphAnchorSide: Hashable {
-    case left
-    case right
-
-    func anchorPoint(in frame: CGRect, yOffset: CGFloat) -> CGPoint {
-        CGPoint(
-            x: self == .right ? frame.maxX : frame.minX,
-            y: frame.midY + yOffset
-        )
     }
 }
 
@@ -637,22 +587,6 @@ private struct EdgeCurveGeometry {
             x: point.x - cos(arrowAngle) * distance,
             y: point.y - sin(arrowAngle) * distance
         )
-    }
-}
-
-private struct EdgeArrowHead: View {
-    let geometry: EdgeCurveGeometry
-    let color: Color
-    let size: CGFloat
-
-    var body: some View {
-        ArrowHeadShape(
-            tip: geometry.arrowTip(),
-            angle: geometry.arrowAngle,
-            size: size
-        )
-        .fill(color)
-        .shadow(color: color.opacity(0.18), radius: 1.5, x: 0, y: 0)
     }
 }
 
@@ -753,50 +687,6 @@ private struct LevelGroupCard: View {
 
     private var borderColor: Color {
         isSelected ? .accentColor.opacity(0.6) : .secondary.opacity(0.15)
-    }
-}
-
-private struct LevelEdgeView: View {
-    let edge: SpiderGraphLevelEdge
-    let from: CGRect
-    let to: CGRect
-    let isSelected: Bool
-
-    var body: some View {
-        let geometry = EdgeCurveGeometry(from: from, to: to)
-        let strokeColor = isSelected ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.22)
-        let arrowColor = isSelected ? Color.accentColor.opacity(0.82) : Color.secondary.opacity(0.4)
-        let arrowSize: CGFloat = isSelected ? 10 : 8
-        let lineGeometry = geometry.trimmedEnd(by: max(7, arrowSize + 1.5))
-
-        ZStack {
-            EdgeShape(geometry: lineGeometry)
-                .stroke(
-                    strokeColor,
-                    style: StrokeStyle(lineWidth: isSelected ? 3 : 2, lineCap: .round)
-                )
-
-            EdgeArrowHead(
-                geometry: geometry,
-                color: arrowColor,
-                size: arrowSize
-            )
-
-            Text("\(edge.edgeCount)")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(.regularMaterial, in: Capsule())
-                .position(edgeLabelPosition)
-        }
-    }
-
-    private var edgeLabelPosition: CGPoint {
-        CGPoint(
-            x: (from.maxX + to.minX) / 2,
-            y: (from.midY + to.midY) / 2 - 16
-        )
     }
 }
 
