@@ -4,6 +4,4 @@ Derived/
 __pycache__/
 TuistSpider.xcodeproj/
 TuistSpider.xcworkspace/
-exports/
 dist/
-web/data/current-graph.json

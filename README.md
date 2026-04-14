@@ -51,7 +51,7 @@ Releases:
 
 ## App-Only Distribution
 
-Yes. You do not need users to clone the repo or build from source.
+Yes. Users do not need to clone the repo or build from source.
 
 The recommended flow is:
 
@@ -147,13 +147,7 @@ The `외부 의존성 포함` toggle treats a node as external when:
 
 - the dependency kind is `package`, `packageProduct`, `external`, `sdk`, `framework`, `xcframework`, `library`, or similar
 - the path is outside the project root
-- the path contains markers like:
-  - `checkouts`
-  - `SourcePackages`
-  - `.build`
-  - `.cache`
-  - `CocoaPods`
-  - `Carthage`
+- the path contains markers like `checkouts`, `SourcePackages`, `.build`, `.cache`, `CocoaPods`, `Carthage`
 
 This means third-party modules still get classified correctly even when Tuist resolves them as `project/target`.
 
@@ -175,6 +169,10 @@ If the app cannot find `tuist` from the GUI environment:
 TUIST_EXECUTABLE=/opt/homebrew/bin/tuist ./scripts/run_mac_app.sh
 ```
 
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
+
 ## Repository Layout
 
 - `App/`
@@ -187,18 +185,10 @@ TUIST_EXECUTABLE=/opt/homebrew/bin/tuist ./scripts/run_mac_app.sh
   - generate + open Xcode project
 - `scripts/mac/build-release-zip.sh`
   - build a Release `.app` and package it as a zip for GitHub Releases
-- `scripts/export_tuist_graph.sh`
-  - export and normalize Tuist graph data
-- `scripts/normalize_tuist_graph.py`
-  - normalize Tuist `json` / `legacyJSON`
-- `web/`
-  - older static web viewer
 - `examples/TuistFixture`
   - local sample Tuist project
 
 ## Release Workflow
-
-The simplest public distribution flow is:
 
 1. Push `main`
 2. Run:
