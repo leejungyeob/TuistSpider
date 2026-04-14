@@ -78,6 +78,103 @@ struct GraphCanvasView: View {
         )
     }
 
+    private var expandedEdgeEndpoints: [String: EdgeEndpoints] {
+        struct EdgeLayoutInput {
+            let edge: SpiderGraphEdge
+            let fromFrame: CGRect
+            let toFrame: CGRect
+            let sourceSide: GraphAnchorSide
+            let targetSide: GraphAnchorSide
+        }
+
+        let inputs: [EdgeLayoutInput] = subgraph.edges.compactMap { edge in
+            guard
+                let fromFrame = layout.nodeFrames[edge.from],
+                let toFrame = layout.nodeFrames[edge.to]
+            else {
+                return nil
+            }
+
+            let sourceSide: GraphAnchorSide = fromFrame.midX <= toFrame.midX ? .right : .left
+            let targetSide: GraphAnchorSide = sourceSide == .right ? .left : .right
+            return EdgeLayoutInput(
+                edge: edge,
+                fromFrame: fromFrame,
+                toFrame: toFrame,
+                sourceSide: sourceSide,
+                targetSide: targetSide
+            )
+        }
+
+        var sourceOffsets: [String: CGFloat] = [:]
+        var targetOffsets: [String: CGFloat] = [:]
+
+        let sourceGroups = Dictionary(grouping: inputs) { input in
+            EdgePortKey(nodeID: input.edge.from, side: input.sourceSide)
+        }
+        let targetGroups = Dictionary(grouping: inputs) { input in
+            EdgePortKey(nodeID: input.edge.to, side: input.targetSide)
+        }
+
+        for (key, group) in sourceGroups {
+            let sorted = group.sorted { lhs, rhs in
+                edgeSortTuple(
+                    counterpartFrame: lhs.toFrame,
+                    counterpartNodeID: lhs.edge.to,
+                    edgeID: lhs.edge.id
+                ) < edgeSortTuple(
+                    counterpartFrame: rhs.toFrame,
+                    counterpartNodeID: rhs.edge.to,
+                    edgeID: rhs.edge.id
+                )
+            }
+
+            for (index, input) in sorted.enumerated() {
+                sourceOffsets[input.edge.id] = portOffset(
+                    index: index,
+                    count: sorted.count,
+                    frame: key.side == .left ? input.fromFrame : input.fromFrame
+                )
+            }
+        }
+
+        for (key, group) in targetGroups {
+            let sorted = group.sorted { lhs, rhs in
+                edgeSortTuple(
+                    counterpartFrame: lhs.fromFrame,
+                    counterpartNodeID: lhs.edge.from,
+                    edgeID: lhs.edge.id
+                ) < edgeSortTuple(
+                    counterpartFrame: rhs.fromFrame,
+                    counterpartNodeID: rhs.edge.from,
+                    edgeID: rhs.edge.id
+                )
+            }
+
+            for (index, input) in sorted.enumerated() {
+                targetOffsets[input.edge.id] = portOffset(
+                    index: index,
+                    count: sorted.count,
+                    frame: key.side == .left ? input.toFrame : input.toFrame
+                )
+            }
+        }
+
+        var endpoints: [String: EdgeEndpoints] = [:]
+        for input in inputs {
+            let start = input.sourceSide.anchorPoint(
+                in: input.fromFrame,
+                yOffset: sourceOffsets[input.edge.id] ?? 0
+            )
+            let end = input.targetSide.anchorPoint(
+                in: input.toFrame,
+                yOffset: targetOffsets[input.edge.id] ?? 0
+            )
+            endpoints[input.edge.id] = EdgeEndpoints(start: start, end: end)
+        }
+        return endpoints
+    }
+
     private var contentFocusRect: CGRect? {
         switch presentationMode {
         case .expanded:
@@ -144,8 +241,12 @@ struct GraphCanvasView: View {
     private var expandedCanvasContent: some View {
         ZStack(alignment: .topLeading) {
             ForEach(subgraph.edges) { edge in
-                if let from = layout.nodeFrames[edge.from], let to = layout.nodeFrames[edge.to] {
-                    expandedEdgeView(edge: edge, from: from, to: to)
+                if
+                    let from = layout.nodeFrames[edge.from],
+                    let to = layout.nodeFrames[edge.to],
+                    let endpoints = expandedEdgeEndpoints[edge.id]
+                {
+                    expandedEdgeView(edge: edge, from: from, to: to, endpoints: endpoints)
                 }
             }
 
@@ -264,9 +365,9 @@ struct GraphCanvasView: View {
     }
 
     @ViewBuilder
-    private func expandedEdgeView(edge: SpiderGraphEdge, from: CGRect, to: CGRect) -> some View {
+    private func expandedEdgeView(edge: SpiderGraphEdge, from: CGRect, to: CGRect, endpoints: EdgeEndpoints) -> some View {
         let matchingPaths = edgeConnectionPaths[edge.id] ?? []
-        let geometry = EdgeCurveGeometry(from: from, to: to)
+        let geometry = EdgeCurveGeometry(start: endpoints.start, end: endpoints.end)
         let baseColor = baseEdgeColor(for: edge, matchingPaths: matchingPaths)
         let baseStroke = baseEdgeStrokeStyle(for: edge)
         let baseArrowSize = baseArrowSize(for: edge)
@@ -361,6 +462,18 @@ struct GraphCanvasView: View {
     private func arrowLineInset(for arrowSize: CGFloat) -> CGFloat {
         max(7, arrowSize + 1.5)
     }
+
+    private func edgeSortTuple(counterpartFrame: CGRect, counterpartNodeID: String, edgeID: String) -> (CGFloat, CGFloat, String, String) {
+        (counterpartFrame.midY, counterpartFrame.midX, counterpartNodeID, edgeID)
+    }
+
+    private func portOffset(index: Int, count: Int, frame: CGRect) -> CGFloat {
+        guard count > 1 else { return 0 }
+        let halfSpan = CGFloat(count - 1) / 2
+        let maxSpread = min(frame.height * 0.32, 26)
+        let step = min(12, maxSpread / max(halfSpan, 1))
+        return (CGFloat(index) - halfSpan) * step
+    }
 }
 
 private struct GraphNodeCard: View {
@@ -451,6 +564,28 @@ private struct EdgeShape: Shape {
     }
 }
 
+private struct EdgeEndpoints {
+    let start: CGPoint
+    let end: CGPoint
+}
+
+private struct EdgePortKey: Hashable {
+    let nodeID: String
+    let side: GraphAnchorSide
+}
+
+private enum GraphAnchorSide: Hashable {
+    case left
+    case right
+
+    func anchorPoint(in frame: CGRect, yOffset: CGFloat) -> CGPoint {
+        CGPoint(
+            x: self == .right ? frame.maxX : frame.minX,
+            y: frame.midY + yOffset
+        )
+    }
+}
+
 private struct EdgeCurveGeometry {
     let start: CGPoint
     let end: CGPoint
@@ -458,14 +593,10 @@ private struct EdgeCurveGeometry {
     let control2: CGPoint
 
     init(from: CGRect, to: CGRect) {
-        let start = CGPoint(x: from.maxX, y: from.midY)
-        let end = CGPoint(x: to.minX, y: to.midY)
-        let deltaX = max((end.x - start.x) * 0.45, 36)
-
-        self.start = start
-        self.end = end
-        self.control1 = CGPoint(x: start.x + deltaX, y: start.y)
-        self.control2 = CGPoint(x: end.x - deltaX, y: end.y)
+        let isForward = from.midX <= to.midX
+        let start = CGPoint(x: isForward ? from.maxX : from.minX, y: from.midY)
+        let end = CGPoint(x: isForward ? to.minX : to.maxX, y: to.midY)
+        self.init(start: start, end: end)
     }
 
     init(start: CGPoint, end: CGPoint, control1: CGPoint, control2: CGPoint) {
@@ -473,6 +604,17 @@ private struct EdgeCurveGeometry {
         self.end = end
         self.control1 = control1
         self.control2 = control2
+    }
+
+    init(start: CGPoint, end: CGPoint) {
+        let direction: CGFloat = end.x >= start.x ? 1 : -1
+        let deltaX = max(abs(end.x - start.x) * 0.45, 36)
+        self.init(
+            start: start,
+            end: end,
+            control1: CGPoint(x: start.x + direction * deltaX, y: start.y),
+            control2: CGPoint(x: end.x - direction * deltaX, y: end.y)
+        )
     }
 
     var arrowAngle: CGFloat {
