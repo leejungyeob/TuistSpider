@@ -6,7 +6,8 @@ final class TuistSpiderViewModel: ObservableObject {
     static let defaultZoomScale = 1.0
     static let zoomScaleRange: ClosedRange<Double> = 0.5...2.0
     static let zoomStep = 0.15
-    static let maxConnectionPaths = 12
+    static let defaultConnectionPathLimit = 12
+    static let connectionPathLimitStep = 12
     static let connectionPathExtraHops = 3
 
     @Published private(set) var graph = SampleGraph.make()
@@ -15,29 +16,35 @@ final class TuistSpiderViewModel: ObservableObject {
     }
     @Published var graphSelectedNodeID: String?
     @Published private var selectedConnectionPathIDs: Set<String>? = nil
+    @Published var showOnlyActivePaths = false {
+        didSet {
+            refreshDisplayedSubgraph()
+            persistPreferences()
+        }
+    }
     @Published var direction: GraphDirection = .both {
         didSet {
-            resetConnectionPathSelection()
+            resetConnectionPathState()
             refreshDerivedState()
             persistPreferences()
         }
     }
     @Published var depth: GraphDepth = .all {
         didSet {
-            resetConnectionPathSelection()
+            resetConnectionPathState()
             refreshDerivedState()
             persistPreferences()
         }
     }
     @Published var presentationMode: GraphPresentationMode = .expanded {
         didSet {
-            resetConnectionPathSelection()
+            resetConnectionPathState()
             persistPreferences()
         }
     }
     @Published var includeExternal = false {
         didSet {
-            resetConnectionPathSelection()
+            resetConnectionPathState()
             refreshDerivedState()
             persistPreferences()
         }
@@ -69,8 +76,10 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published private(set) var directDependencies: [SpiderGraphNode] = []
     @Published private(set) var directDependents: [SpiderGraphNode] = []
     @Published private(set) var connectionPaths: [SpiderGraphConnectionPath] = []
+    @Published private(set) var connectionPathLimit = TuistSpiderViewModel.defaultConnectionPathLimit
     @Published private(set) var hasTruncatedConnectionPaths = false
     @Published private(set) var connectionDirection: SpiderGraphRelationshipDirection?
+    @Published private(set) var displayedSubgraph = SpiderGraphSubgraph.empty
 
     private let exportService = TuistGraphExportService()
     private let preferences = UserDefaults.standard
@@ -141,8 +150,16 @@ final class TuistSpiderViewModel: ObservableObject {
         Set(activeConnectionPaths.flatMap(\.nodeIDs))
     }
 
+    var activeConnectionPathEdgeIDs: Set<String> {
+        Set(activeConnectionPaths.flatMap(\.edgeIDs))
+    }
+
     var activeConnectionPathCount: Int {
         activeConnectionPaths.count
+    }
+
+    var isUsingExpandedConnectionPathLimit: Bool {
+        connectionPathLimit > Self.defaultConnectionPathLimit
     }
 
     func isConnectionPathVisible(_ pathID: String) -> Bool {
@@ -150,7 +167,7 @@ final class TuistSpiderViewModel: ObservableObject {
     }
 
     var visibleLevelGroups: [SpiderGraphLevelGroup] {
-        visibleSubgraph.levelGroups
+        displayedSubgraph.levelGroups
     }
 
     var selectedLevelGroup: SpiderGraphLevelGroup? {
@@ -161,8 +178,8 @@ final class TuistSpiderViewModel: ObservableObject {
 
     var totalNodeCount: Int { graph.nodes.count }
     var totalEdgeCount: Int { graph.edges.count }
-    var visibleNodeCount: Int { visibleSubgraph.nodes.count }
-    var visibleEdgeCount: Int { visibleSubgraph.edges.count }
+    var visibleNodeCount: Int { displayedSubgraph.nodes.count }
+    var visibleEdgeCount: Int { displayedSubgraph.edges.count }
 
     var currentPathLabel: String {
         currentProjectURL?.path ?? currentJSONURL?.path ?? graph.rootPath ?? "샘플 그래프"
@@ -227,7 +244,7 @@ final class TuistSpiderViewModel: ObservableObject {
         searchText = ""
         zoomScale = Self.defaultZoomScale
         graphSelectedNodeID = nil
-        resetConnectionPathSelection()
+        resetConnectionPathState()
         selectedLevel = 0
         selectedNodeID = graph.preferredRootID
         refreshDerivedState()
@@ -238,7 +255,7 @@ final class TuistSpiderViewModel: ObservableObject {
     func selectNode(_ nodeID: String) {
         selectedNodeID = nodeID
         graphSelectedNodeID = nil
-        resetConnectionPathSelection()
+        resetConnectionPathState()
         selectedLevel = 0
         refreshDerivedState()
         requestViewportCentering()
@@ -247,12 +264,12 @@ final class TuistSpiderViewModel: ObservableObject {
     func selectGraphNode(_ nodeID: String) {
         guard nodeID != selectedNodeID else {
             graphSelectedNodeID = nil
-            resetConnectionPathSelection()
+            resetConnectionPathState()
             refreshDerivedState()
             return
         }
         graphSelectedNodeID = graphSelectedNodeID == nodeID ? nil : nodeID
-        resetConnectionPathSelection()
+        resetConnectionPathState()
         refreshDerivedState()
     }
 
@@ -262,15 +279,54 @@ final class TuistSpiderViewModel: ObservableObject {
 
     func showAllConnectionPaths() {
         selectedConnectionPathIDs = nil
+        refreshDisplayedSubgraph()
     }
 
     func hideAllConnectionPaths() {
         selectedConnectionPathIDs = []
+        if showOnlyActivePaths {
+            showOnlyActivePaths = false
+        } else {
+            refreshDisplayedSubgraph()
+        }
     }
 
-    func toggleConnectionPath(_ pathID: String) {
+    func increaseConnectionPathLimit() {
+        connectionPathLimit += Self.connectionPathLimitStep
+        refreshDerivedState()
+    }
+
+    func resetConnectionPathLimit() {
+        guard connectionPathLimit != Self.defaultConnectionPathLimit else { return }
+        connectionPathLimit = Self.defaultConnectionPathLimit
+        refreshDerivedState()
+    }
+
+    func toggleConnectionPath(_ pathID: String, additiveSelection: Bool = false) {
         let availablePathIDs = Set(connectionPaths.map(\.id))
         guard availablePathIDs.contains(pathID) else { return }
+
+        if showOnlyActivePaths {
+            if additiveSelection {
+                var nextSelection = selectedConnectionPathIDs ?? availablePathIDs
+                if nextSelection.contains(pathID) {
+                    nextSelection.remove(pathID)
+                } else {
+                    nextSelection.insert(pathID)
+                }
+
+                selectedConnectionPathIDs = nextSelection == availablePathIDs ? nil : nextSelection
+                if selectedConnectionPathIDs?.isEmpty == true {
+                    showOnlyActivePaths = false
+                } else {
+                    refreshDisplayedSubgraph()
+                }
+            } else {
+                selectedConnectionPathIDs = [pathID]
+                refreshDisplayedSubgraph()
+            }
+            return
+        }
 
         var nextSelection = selectedConnectionPathIDs ?? availablePathIDs
         if nextSelection.contains(pathID) {
@@ -280,6 +336,11 @@ final class TuistSpiderViewModel: ObservableObject {
         }
 
         selectedConnectionPathIDs = nextSelection == availablePathIDs ? nil : nextSelection
+        if selectedConnectionPathIDs?.isEmpty == true, showOnlyActivePaths {
+            showOnlyActivePaths = false
+        } else {
+            refreshDisplayedSubgraph()
+        }
     }
 
     func setZoomScale(_ value: Double) {
@@ -359,7 +420,7 @@ final class TuistSpiderViewModel: ObservableObject {
         self.graph = graph
         self.selectedNodeID = graph.preferredRootID
         self.graphSelectedNodeID = nil
-        resetConnectionPathSelection()
+        resetConnectionPathState()
         self.selectedLevel = 0
         refreshDerivedState()
         requestViewportCentering()
@@ -382,6 +443,9 @@ final class TuistSpiderViewModel: ObservableObject {
            let presentationMode = GraphPresentationMode(rawValue: rawPresentationMode) {
             self.presentationMode = presentationMode
         }
+        if preferences.object(forKey: PreferencesKey.showOnlyActivePaths.rawValue) != nil {
+            self.showOnlyActivePaths = preferences.bool(forKey: PreferencesKey.showOnlyActivePaths.rawValue)
+        }
         self.includeExternal = preferences.bool(forKey: PreferencesKey.includeExternal.rawValue)
         self.searchText = preferences.string(forKey: PreferencesKey.searchText.rawValue) ?? ""
         self.selectedNodeID = preferences.string(forKey: PreferencesKey.selectedNodeID.rawValue)
@@ -397,6 +461,7 @@ final class TuistSpiderViewModel: ObservableObject {
         preferences.set(direction.rawValue, forKey: PreferencesKey.direction.rawValue)
         preferences.set(depth.rawValue, forKey: PreferencesKey.depth.rawValue)
         preferences.set(presentationMode.rawValue, forKey: PreferencesKey.presentationMode.rawValue)
+        preferences.set(showOnlyActivePaths, forKey: PreferencesKey.showOnlyActivePaths.rawValue)
         preferences.set(includeExternal, forKey: PreferencesKey.includeExternal.rawValue)
         preferences.set(searchText, forKey: PreferencesKey.searchText.rawValue)
         preferences.set(selectedNodeID, forKey: PreferencesKey.selectedNodeID.rawValue)
@@ -408,13 +473,15 @@ final class TuistSpiderViewModel: ObservableObject {
         min(max(value, zoomScaleRange.lowerBound), zoomScaleRange.upperBound)
     }
 
-    private func resetConnectionPathSelection() {
+    private func resetConnectionPathState() {
         selectedConnectionPathIDs = nil
+        connectionPathLimit = Self.defaultConnectionPathLimit
     }
 
     private func refreshDerivedState() {
         refreshVisibleSubgraph()
         refreshInspectorState()
+        refreshDisplayedSubgraph()
     }
 
     private func refreshVisibleSubgraph() {
@@ -463,7 +530,7 @@ final class TuistSpiderViewModel: ObservableObject {
         let connectionPathResult = visibleSubgraph.connectionPaths(
             from: focusedNodeID,
             to: graphSelectedNodeID,
-            maxPaths: Self.maxConnectionPaths,
+            maxPaths: connectionPathLimit,
             maxExtraHops: Self.connectionPathExtraHops
         )
 
@@ -476,6 +543,23 @@ final class TuistSpiderViewModel: ObservableObject {
         )
     }
 
+    private func refreshDisplayedSubgraph() {
+        if showOnlyActivePaths && !activeConnectionPaths.isEmpty {
+            displayedSubgraph = visibleSubgraph.filtered(
+                toNodeIDs: activeConnectionPathNodeIDs,
+                edgeIDs: activeConnectionPathEdgeIDs
+            )
+        } else {
+            displayedSubgraph = visibleSubgraph
+        }
+
+        if displayedSubgraph.levelGroups.contains(where: { $0.level == selectedLevel }) == false {
+            selectedLevel = displayedSubgraph.levelGroups.first(where: { $0.level == 0 })?.level
+                ?? displayedSubgraph.levelGroups.first?.level
+                ?? 0
+        }
+    }
+
     private func requestViewportCentering() {
         viewportCenterRequestID &+= 1
     }
@@ -484,6 +568,7 @@ final class TuistSpiderViewModel: ObservableObject {
         case direction
         case depth
         case presentationMode
+        case showOnlyActivePaths
         case includeExternal
         case searchText
         case selectedNodeID

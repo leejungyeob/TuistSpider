@@ -175,6 +175,22 @@ struct SpiderGraphSubgraph: Sendable {
 
     static let empty = SpiderGraphSubgraph(nodes: [], edges: [], levels: [:])
 
+    func filtered(
+        toNodeIDs includedNodeIDs: Set<String>,
+        edgeIDs includedEdgeIDs: Set<String>
+    ) -> SpiderGraphSubgraph {
+        guard !includedNodeIDs.isEmpty else { return .empty }
+
+        let filteredNodes = nodes.filter { includedNodeIDs.contains($0.id) }
+        let filteredEdges = edges.filter { edge in
+            includedEdgeIDs.contains(edge.id)
+                && includedNodeIDs.contains(edge.from)
+                && includedNodeIDs.contains(edge.to)
+        }
+        let filteredLevels = levels.filter { includedNodeIDs.contains($0.key) }
+        return SpiderGraphSubgraph(nodes: filteredNodes, edges: filteredEdges, levels: filteredLevels)
+    }
+
     func connectionPaths(
         from startID: String,
         to endID: String,

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -157,7 +158,7 @@ struct ContentView: View {
             .padding(.top, 16)
 
             GraphCanvasView(
-                subgraph: viewModel.visibleSubgraph,
+                subgraph: viewModel.displayedSubgraph,
                 presentationMode: viewModel.presentationMode,
                 focusedNodeID: viewModel.selectedNodeID,
                 graphSelectedNodeID: viewModel.visibleGraphSelectedNodeID,
@@ -365,15 +366,49 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
             }
 
-            if viewModel.hasTruncatedConnectionPaths {
-                Text("경로가 많아 상위 \(TuistSpiderViewModel.maxConnectionPaths)개만 표시합니다.")
+            Toggle("선택 경로만 보기", isOn: $viewModel.showOnlyActivePaths)
+                .toggleStyle(.switch)
+                .disabled(viewModel.connectionPaths.isEmpty)
+
+            if viewModel.showOnlyActivePaths {
+                Text("활성화된 경로에 포함된 노드와 간선만 그래프에 남깁니다. Shift + 클릭으로 경로를 추가하거나 제거할 수 있습니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
+            if viewModel.hasTruncatedConnectionPaths {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("경로가 많아 상위 \(viewModel.connectionPathLimit)개만 표시합니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        Button("더 보기 (+\(TuistSpiderViewModel.connectionPathLimitStep))") {
+                            viewModel.increaseConnectionPathLimit()
+                        }
+                        .buttonStyle(.bordered)
+
+                        if viewModel.isUsingExpandedConnectionPathLimit {
+                            Button("초기값") {
+                                viewModel.resetConnectionPathLimit()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            } else if viewModel.isUsingExpandedConnectionPathLimit {
+                Button("경로 제한 초기화") {
+                    viewModel.resetConnectionPathLimit()
+                }
+                .buttonStyle(.bordered)
+            }
+
             ForEach(viewModel.connectionPaths) { path in
                 Button {
-                    viewModel.toggleConnectionPath(path.id)
+                    viewModel.toggleConnectionPath(
+                        path.id,
+                        additiveSelection: viewModel.showOnlyActivePaths && NSEvent.modifierFlags.contains(.shift)
+                    )
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
