@@ -338,6 +338,7 @@ struct SpiderGraphSubgraph: Sendable {
     let canvasLayout: SpiderGraphCanvasLayout
     let levelCanvasLayout: SpiderGraphLevelCanvasLayout
     let edgeEndpoints: [String: SpiderGraphEdgeEndpoints]
+    let renderSignature: Int
 
     init(nodes: [SpiderGraphNode], edges: [SpiderGraphEdge], levels: [String: Int]) {
         self.nodes = nodes
@@ -349,6 +350,13 @@ struct SpiderGraphSubgraph: Sendable {
         self.canvasLayout = SpiderGraphCanvasLayout.make(for: nodes, levels: levels)
         self.levelCanvasLayout = SpiderGraphLevelCanvasLayout.make(for: self.levelGroups)
         self.edgeEndpoints = Self.makeEdgeEndpoints(edges: edges, layout: canvasLayout)
+        self.renderSignature = Self.makeRenderSignature(
+            nodes: nodes,
+            edges: edges,
+            levels: levels,
+            canvasLayout: canvasLayout,
+            levelLayout: levelCanvasLayout
+        )
     }
 
     static let empty = SpiderGraphSubgraph(nodes: [], edges: [], levels: [:])
@@ -367,6 +375,42 @@ struct SpiderGraphSubgraph: Sendable {
         }
         let filteredLevels = levels.filter { includedNodeIDs.contains($0.key) }
         return SpiderGraphSubgraph(nodes: filteredNodes, edges: filteredEdges, levels: filteredLevels)
+    }
+
+    private static func makeRenderSignature(
+        nodes: [SpiderGraphNode],
+        edges: [SpiderGraphEdge],
+        levels: [String: Int],
+        canvasLayout: SpiderGraphCanvasLayout,
+        levelLayout: SpiderGraphLevelCanvasLayout
+    ) -> Int {
+        var hasher = Hasher()
+        hasher.combine(nodes.count)
+        hasher.combine(edges.count)
+        hasher.combine(canvasLayout.canvasSize)
+
+        for node in nodes {
+            hasher.combine(node.id)
+            hasher.combine(levels[node.id] ?? 0)
+            if let frame = canvasLayout.nodeFrames[node.id] {
+                hasher.combine(frame)
+            }
+        }
+
+        for edge in edges {
+            hasher.combine(edge.id)
+            hasher.combine(edge.from)
+            hasher.combine(edge.to)
+        }
+
+        for level in levelLayout.groupFrames.keys.sorted() {
+            hasher.combine(level)
+            if let frame = levelLayout.groupFrames[level] {
+                hasher.combine(frame)
+            }
+        }
+
+        return hasher.finalize()
     }
 
     func connectionPaths(

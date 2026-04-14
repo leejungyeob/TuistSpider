@@ -31,6 +31,10 @@ struct GraphCanvasView: View {
     @Binding var zoomScale: Double
 
     @GestureState private var gestureZoomScale: CGFloat = 1
+    @State private var cachedExpandedEdgeRenderModels: [ExpandedEdgeRenderModel] = []
+    @State private var cachedGroupedEdgeRenderModels: [GroupedEdgeRenderModel] = []
+    @State private var cachedExpandedEdgeRenderSignature: Int?
+    @State private var cachedGroupedEdgeRenderSignature: Int?
 
     let onSelect: (String) -> Void
     let onSelectLevel: (Int) -> Void
@@ -87,7 +91,34 @@ struct GraphCanvasView: View {
         subgraph.nodes.count > 80 || subgraph.edges.count > 140
     }
 
+    private var expandedEdgeRenderSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(subgraph.renderSignature)
+        hasher.combine(focusedNodeID)
+        hasher.combine(graphSelectedNodeID)
+        hasher.combine(hasConnectionPathContext)
+        for path in connectionPaths {
+            hasher.combine(path.id)
+        }
+        return hasher.finalize()
+    }
+
+    private var groupedEdgeRenderSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(subgraph.renderSignature)
+        hasher.combine(selectedLevel)
+        return hasher.finalize()
+    }
+
     private var expandedEdgeRenderModels: [ExpandedEdgeRenderModel] {
+        guard cachedExpandedEdgeRenderSignature == expandedEdgeRenderSignature else {
+            return cachedExpandedEdgeRenderModels
+        }
+        
+        return cachedExpandedEdgeRenderModels
+    }
+
+    private func buildExpandedEdgeRenderModels() -> [ExpandedEdgeRenderModel] {
         var laneOccupancy = ExpandedEdgeLaneOccupancy()
         return subgraph.edges.compactMap { edge in
             guard let endpoints = subgraph.edgeEndpoints[edge.id] else { return nil }
@@ -126,6 +157,14 @@ struct GraphCanvasView: View {
     }
 
     private var groupedEdgeRenderModels: [GroupedEdgeRenderModel] {
+        guard cachedGroupedEdgeRenderSignature == groupedEdgeRenderSignature else {
+            return cachedGroupedEdgeRenderModels
+        }
+
+        return cachedGroupedEdgeRenderModels
+    }
+
+    private func buildGroupedEdgeRenderModels() -> [GroupedEdgeRenderModel] {
         subgraph.levelEdges.compactMap { edge in
             guard
                 let from = levelLayout.groupFrames[edge.fromLevel],
@@ -168,37 +207,47 @@ struct GraphCanvasView: View {
     }
 
     var body: some View {
-        if subgraph.nodes.isEmpty {
-            ContentUnavailableView(
-                "표시할 그래프가 없습니다",
-                systemImage: "point.3.filled.connected.trianglepath.dotted",
-                description: Text("왼쪽 목록에서 모듈을 선택하거나 외부 의존성 표시 옵션을 바꿔보세요.")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ZStack(alignment: .topTrailing) {
-                InteractiveCanvasScrollView(
-                    zoomScale: $zoomScale,
-                    focusRect: contentFocusRect,
-                    focusRequestID: focusRequestID,
-                    contentSize: CGSize(
-                        width: scaledCanvasSize.width + 48,
-                        height: scaledCanvasSize.height + 48
-                    )
-                ) {
-                    canvasContent
-                    .scaleEffect(effectiveZoomScale, anchor: .topLeading)
-                    .frame(width: scaledCanvasSize.width, height: scaledCanvasSize.height, alignment: .topLeading)
-                    .padding(24)
-                }
-                .background(Color(nsColor: .textBackgroundColor))
-                .simultaneousGesture(magnificationGesture)
+        Group {
+            if subgraph.nodes.isEmpty {
+                ContentUnavailableView(
+                    "표시할 그래프가 없습니다",
+                    systemImage: "point.3.filled.connected.trianglepath.dotted",
+                    description: Text("왼쪽 목록에서 모듈을 선택하거나 외부 의존성 표시 옵션을 바꿔보세요.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ZStack(alignment: .topTrailing) {
+                    InteractiveCanvasScrollView(
+                        zoomScale: $zoomScale,
+                        focusRect: contentFocusRect,
+                        focusRequestID: focusRequestID,
+                        contentSize: CGSize(
+                            width: scaledCanvasSize.width + 48,
+                            height: scaledCanvasSize.height + 48
+                        )
+                    ) {
+                        canvasContent
+                        .scaleEffect(effectiveZoomScale, anchor: .topLeading)
+                        .frame(width: scaledCanvasSize.width, height: scaledCanvasSize.height, alignment: .topLeading)
+                        .padding(24)
+                    }
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .simultaneousGesture(magnificationGesture)
 
-                if showsZoomControls {
-                    zoomControls
-                        .padding(16)
+                    if showsZoomControls {
+                        zoomControls
+                            .padding(16)
+                    }
                 }
             }
+        }
+        .task(id: expandedEdgeRenderSignature) {
+            cachedExpandedEdgeRenderModels = buildExpandedEdgeRenderModels()
+            cachedExpandedEdgeRenderSignature = expandedEdgeRenderSignature
+        }
+        .task(id: groupedEdgeRenderSignature) {
+            cachedGroupedEdgeRenderModels = buildGroupedEdgeRenderModels()
+            cachedGroupedEdgeRenderSignature = groupedEdgeRenderSignature
         }
     }
 
@@ -413,6 +462,10 @@ struct GraphCanvasView: View {
         matchingPaths: [SpiderGraphConnectionPath],
         laneOccupancy: ExpandedEdgeLaneOccupancy
     ) -> EdgePathGeometry {
+        if shouldUseSelectiveRouting && !isEmphasizedEdge(edge, matchingPaths: matchingPaths) {
+            return baseExpandedDirectGeometry(for: endpoints)
+        }
+
         let directGeometry = preferredExpandedDirectGeometry(
             for: endpoints,
             laneOccupancy: laneOccupancy
@@ -581,6 +634,25 @@ struct GraphCanvasView: View {
         }
 
         return bestCandidate.geometry
+    }
+
+    private func isEmphasizedEdge(
+        _ edge: SpiderGraphEdge,
+        matchingPaths: [SpiderGraphConnectionPath]
+    ) -> Bool {
+        if !matchingPaths.isEmpty {
+            return true
+        }
+
+        if edge.from == focusedNodeID || edge.to == focusedNodeID {
+            return true
+        }
+
+        if edge.from == graphSelectedNodeID || edge.to == graphSelectedNodeID {
+            return true
+        }
+
+        return false
     }
 
     private func preferredExpandedDirectGeometry(
