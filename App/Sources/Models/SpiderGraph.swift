@@ -489,7 +489,33 @@ struct SpiderGraph: Hashable, Sendable {
     }
 
     var preferredRootID: String? {
-        nodes.first(where: { !$0.isExternal })?.id ?? nodes.first?.id
+        let internalNodes = nodes.filter { !$0.isExternal }
+        guard !internalNodes.isEmpty else { return nodes.first?.id }
+
+        return internalNodes
+            .sorted { lhs, rhs in
+                let lhsIncomingCount = incoming[lhs.id]?.count ?? 0
+                let rhsIncomingCount = incoming[rhs.id]?.count ?? 0
+                if lhsIncomingCount != rhsIncomingCount {
+                    return lhsIncomingCount < rhsIncomingCount
+                }
+
+                let lhsProductRank = productRank(for: lhs)
+                let rhsProductRank = productRank(for: rhs)
+                if lhsProductRank != rhsProductRank {
+                    return lhsProductRank < rhsProductRank
+                }
+
+                let lhsOutgoingCount = outgoing[lhs.id]?.count ?? 0
+                let rhsOutgoingCount = outgoing[rhs.id]?.count ?? 0
+                if lhsOutgoingCount != rhsOutgoingCount {
+                    return lhsOutgoingCount > rhsOutgoingCount
+                }
+
+                return SpiderGraph.nodeSort(lhs, rhs)
+            }
+            .first?
+            .id
     }
 
     func directDependencies(of nodeID: String, includeExternal: Bool) -> [SpiderGraphNode] {
@@ -581,5 +607,16 @@ struct SpiderGraph: Hashable, Sendable {
             return leftProject.localizedCaseInsensitiveCompare(rightProject) == .orderedAscending
         }
         return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
+
+    private func productRank(for node: SpiderGraphNode) -> Int {
+        switch node.product?.lowercased() {
+        case "app":
+            return 0
+        case "framework", "staticframework", "dynamicframework":
+            return 1
+        default:
+            return 2
+        }
     }
 }

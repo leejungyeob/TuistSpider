@@ -506,6 +506,8 @@ private final class CanvasInteractionScrollView: NSScrollView {
     private let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
     private var currentContentSize: CGSize = .zero
 
+    override var acceptsFirstResponder: Bool { true }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         configure()
@@ -617,13 +619,16 @@ private final class CanvasInteractionScrollView: NSScrollView {
     private func handleEvent(_ event: NSEvent) -> NSEvent? {
         switch event.type {
         case .keyDown where event.keyCode == 49:
+            guard shouldCaptureSpaceKey else { return event }
             isSpacePressed = true
-            return event
+            window?.makeFirstResponder(self)
+            return nil
 
         case .keyUp where event.keyCode == 49:
+            guard isSpacePressed else { return event }
             isSpacePressed = false
             finishPanning()
-            return event
+            return nil
 
         case .leftMouseDown:
             guard isSpacePressed, containsWindowPoint(event.locationInWindow) else {
@@ -718,6 +723,12 @@ private final class CanvasInteractionScrollView: NSScrollView {
 
     private func clampZoomScale(_ value: Double) -> Double {
         min(max(value, TuistSpiderViewModel.zoomScaleRange.lowerBound), TuistSpiderViewModel.zoomScaleRange.upperBound)
+    }
+
+    private var shouldCaptureSpaceKey: Bool {
+        guard let window else { return false }
+        let mouseLocation = window.mouseLocationOutsideOfEventStream
+        return isPanning || containsWindowPoint(mouseLocation)
     }
 
     private func containsWindowPoint(_ point: NSPoint) -> Bool {

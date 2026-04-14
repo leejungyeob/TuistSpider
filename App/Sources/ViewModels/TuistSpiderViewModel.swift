@@ -240,11 +240,7 @@ final class TuistSpiderViewModel: ObservableObject {
     }
 
     func loadSample() {
-        graph = SampleGraph.make()
-        selectedNodeID = graph.preferredRootID
-        graphSelectedNodeID = nil
-        resetConnectionPathSelection()
-        selectedLevel = 0
+        apply(graph: SampleGraph.make(), resetViewport: true)
         currentProjectURL = nil
         currentJSONURL = nil
         sourceLabel = "Sample graph / normalized-sample"
@@ -336,7 +332,7 @@ final class TuistSpiderViewModel: ObservableObject {
                     try service.loadFromProject(at: targetURL)
                 }.value
 
-                apply(graph: graph)
+                apply(graph: graph, resetViewport: true)
                 currentProjectURL = targetURL
                 currentJSONURL = nil
                 sourceLabel = "Tuist project / \(graph.sourceFormat)"
@@ -365,7 +361,7 @@ final class TuistSpiderViewModel: ObservableObject {
                     try service.loadFromJSONFile(at: targetURL)
                 }.value
 
-                apply(graph: graph)
+                apply(graph: graph, resetViewport: true)
                 currentProjectURL = nil
                 currentJSONURL = targetURL
                 sourceLabel = "JSON file / \(graph.sourceFormat)"
@@ -381,16 +377,16 @@ final class TuistSpiderViewModel: ObservableObject {
         }
     }
 
-    private func apply(graph: SpiderGraph) {
+    private func apply(graph: SpiderGraph, resetViewport: Bool = false) {
         self.graph = graph
-        if let selectedNodeID, graph.nodeMap[selectedNodeID] != nil {
-            self.selectedNodeID = selectedNodeID
-        } else {
-            self.selectedNodeID = graph.preferredRootID
-        }
+        self.selectedNodeID = graph.preferredRootID
         self.graphSelectedNodeID = nil
         resetConnectionPathSelection()
         self.selectedLevel = 0
+
+        if resetViewport {
+            self.zoomScale = Self.defaultZoomScale
+        }
     }
 
     private func restorePreferences() {
