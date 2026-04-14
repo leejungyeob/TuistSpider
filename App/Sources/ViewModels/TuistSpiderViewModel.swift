@@ -25,6 +25,7 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published var direction: GraphDirection = .both {
         didSet {
             resetConnectionPathState()
+            alignDepthSelectionWithCurrentGraph()
             refreshDerivedState()
             persistPreferences()
         }
@@ -45,6 +46,7 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published var includeExternal = false {
         didSet {
             resetConnectionPathState()
+            alignDepthSelectionWithCurrentGraph()
             refreshDerivedState()
             persistPreferences()
         }
@@ -52,6 +54,7 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published var searchText = "" {
         didSet { persistPreferences() }
     }
+    @Published var relatedNodeSearchText = ""
     @Published var zoomScale = TuistSpiderViewModel.defaultZoomScale {
         didSet {
             let clamped = Self.clampZoomScale(zoomScale)
@@ -87,6 +90,7 @@ final class TuistSpiderViewModel: ObservableObject {
     init() {
         restorePreferences()
         selectedNodeID = selectedNodeID ?? graph.preferredRootID
+        alignDepthSelectionWithCurrentGraph()
         refreshDerivedState()
         requestViewportCentering()
     }
@@ -102,6 +106,30 @@ final class TuistSpiderViewModel: ObservableObject {
             let query = searchText.lowercased()
             return node.name.lowercased().contains(query) || node.projectLabel.lowercased().contains(query)
         }
+    }
+
+    var availableDepthOptions: [GraphDepth] {
+        availableDepthOptions(for: selectedNodeID)
+    }
+
+    var filteredRelatedNodes: [SpiderGraphNode] {
+        guard let selectedNodeID else { return [] }
+        let query = relatedNodeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return [] }
+
+        return visibleSubgraph.nodes
+            .filter { node in
+                guard node.id != selectedNodeID else { return false }
+                return node.name.lowercased().contains(query) || node.projectLabel.lowercased().contains(query)
+            }
+            .sorted { lhs, rhs in
+                if lhs.name != rhs.name { return lhs.name < rhs.name }
+                return lhs.id < rhs.id
+            }
+    }
+
+    var filteredRelatedNodesPreview: [SpiderGraphNode] {
+        Array(filteredRelatedNodes.prefix(8))
     }
 
     var selectedNode: SpiderGraphNode? {
@@ -242,6 +270,7 @@ final class TuistSpiderViewModel: ObservableObject {
         presentationMode = .expanded
         includeExternal = false
         searchText = ""
+        relatedNodeSearchText = ""
         zoomScale = Self.defaultZoomScale
         graphSelectedNodeID = nil
         resetConnectionPathState()
@@ -255,8 +284,10 @@ final class TuistSpiderViewModel: ObservableObject {
     func selectNode(_ nodeID: String) {
         selectedNodeID = nodeID
         graphSelectedNodeID = nil
+        relatedNodeSearchText = ""
         resetConnectionPathState()
         selectedLevel = 0
+        alignDepthSelectionWithCurrentGraph()
         refreshDerivedState()
         requestViewportCentering()
     }
@@ -275,6 +306,25 @@ final class TuistSpiderViewModel: ObservableObject {
 
     func selectLevel(_ level: Int) {
         selectedLevel = level
+    }
+
+    func selectRelatedNode(_ nodeID: String) {
+        guard nodeID != selectedNodeID else { return }
+        graphSelectedNodeID = nodeID
+        resetConnectionPathState()
+        refreshDerivedState()
+    }
+
+    func clearRelatedNodeSelection() {
+        guard graphSelectedNodeID != nil else { return }
+        graphSelectedNodeID = nil
+        resetConnectionPathState()
+        refreshDerivedState()
+    }
+
+    func selectFirstMatchingRelatedNode() {
+        guard let nodeID = filteredRelatedNodes.first?.id else { return }
+        selectRelatedNode(nodeID)
     }
 
     func showAllConnectionPaths() {
@@ -420,8 +470,10 @@ final class TuistSpiderViewModel: ObservableObject {
         self.graph = graph
         self.selectedNodeID = graph.preferredRootID
         self.graphSelectedNodeID = nil
+        self.relatedNodeSearchText = ""
         resetConnectionPathState()
         self.selectedLevel = 0
+        alignDepthSelectionWithCurrentGraph()
         refreshDerivedState()
         requestViewportCentering()
 
@@ -505,6 +557,29 @@ final class TuistSpiderViewModel: ObservableObject {
             selectedLevel = visibleSubgraph.levelGroups.first(where: { $0.level == 0 })?.level
                 ?? visibleSubgraph.levelGroups.first?.level
                 ?? 0
+        }
+    }
+
+    private func availableDepthOptions(for nodeID: String?) -> [GraphDepth] {
+        guard let nodeID else { return [.all] }
+        let maxDepth = graph.maxReachableDepth(
+            centeredOn: nodeID,
+            direction: direction,
+            includeExternal: includeExternal
+        )
+        guard maxDepth > 0 else { return [.all] }
+        return (1...maxDepth).map { GraphDepth(maxDepth: $0) } + [.all]
+    }
+
+    private func alignDepthSelectionWithCurrentGraph() {
+        let options = availableDepthOptions(for: selectedNodeID)
+        guard !options.contains(depth) else { return }
+
+        if let currentDepth = depth.maxDepth,
+           let maxAvailableDepth = options.compactMap(\.maxDepth).max() {
+            depth = GraphDepth(maxDepth: min(currentDepth, maxAvailableDepth))
+        } else {
+            depth = .all
         }
     }
 

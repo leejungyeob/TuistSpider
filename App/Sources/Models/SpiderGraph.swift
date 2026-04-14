@@ -57,38 +57,40 @@ enum GraphDirection: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum GraphDepth: String, CaseIterable, Identifiable, Sendable {
-    case one = "1"
-    case two = "2"
-    case three = "3"
-    case all = "all"
+struct GraphDepth: Hashable, Identifiable, Sendable {
+    let maxDepth: Int?
+
+    init(maxDepth: Int?) {
+        if let maxDepth {
+            self.maxDepth = max(1, maxDepth)
+        } else {
+            self.maxDepth = nil
+        }
+    }
+
+    init?(rawValue: String) {
+        if rawValue == "all" {
+            self.init(maxDepth: nil)
+            return
+        }
+
+        guard let value = Int(rawValue), value > 0 else { return nil }
+        self.init(maxDepth: value)
+    }
+
+    static let all = GraphDepth(maxDepth: nil)
+
+    var rawValue: String {
+        maxDepth.map(String.init) ?? "all"
+    }
 
     var id: String { rawValue }
 
     var title: String {
-        switch self {
-        case .one:
-            return "1 단계"
-        case .two:
-            return "2 단계"
-        case .three:
-            return "3 단계"
-        case .all:
-            return "전체"
+        if let maxDepth {
+            return "\(maxDepth) 단계"
         }
-    }
-
-    var maxDepth: Int? {
-        switch self {
-        case .one:
-            return 1
-        case .two:
-            return 2
-        case .three:
-            return 3
-        case .all:
-            return nil
-        }
+        return "전체"
     }
 }
 
@@ -199,7 +201,15 @@ struct SpiderGraphSubgraph: Sendable {
     ) -> SpiderGraphConnectionPathResult? {
         guard startID != endID else {
             return SpiderGraphConnectionPathResult(
-                paths: [SpiderGraphConnectionPath(nodeIDs: [startID], edgeIDs: [], paletteIndex: 0)],
+                paths: [
+                    SpiderGraphConnectionPath(
+                        primaryNodeIDs: [startID],
+                        secondaryNodeIDs: nil,
+                        edgeIDs: [],
+                        paletteIndex: 0,
+                        kind: .directedForward
+                    )
+                ],
                 isTruncated: false
             )
         }
@@ -208,16 +218,23 @@ struct SpiderGraphSubgraph: Sendable {
         guard availableNodeIDs.contains(startID), availableNodeIDs.contains(endID) else { return nil }
 
         let nodeMap = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
-        var adjacency: [String: [(nodeID: String, edgeID: String)]] = [:]
+        var outgoingAdjacency: [String: [(nodeID: String, edgeID: String)]] = [:]
+        var incomingAdjacency: [String: [(nodeID: String, edgeID: String)]] = [:]
 
         for edge in edges {
             guard availableNodeIDs.contains(edge.from), availableNodeIDs.contains(edge.to) else { continue }
-            adjacency[edge.from, default: []].append((edge.to, edge.id))
-            adjacency[edge.to, default: []].append((edge.from, edge.id))
+            outgoingAdjacency[edge.from, default: []].append((edge.to, edge.id))
+            incomingAdjacency[edge.to, default: []].append((edge.from, edge.id))
         }
 
-        for key in adjacency.keys {
-            adjacency[key]?.sort { lhs, rhs in
+        for key in Set(outgoingAdjacency.keys).union(incomingAdjacency.keys) {
+            outgoingAdjacency[key]?.sort { lhs, rhs in
+                let lhsName = nodeMap[lhs.nodeID]?.name ?? lhs.nodeID
+                let rhsName = nodeMap[rhs.nodeID]?.name ?? rhs.nodeID
+                if lhsName != rhsName { return lhsName < rhsName }
+                return lhs.edgeID < rhs.edgeID
+            }
+            incomingAdjacency[key]?.sort { lhs, rhs in
                 let lhsName = nodeMap[lhs.nodeID]?.name ?? lhs.nodeID
                 let rhsName = nodeMap[rhs.nodeID]?.name ?? rhs.nodeID
                 if lhsName != rhsName { return lhsName < rhsName }
@@ -225,72 +242,70 @@ struct SpiderGraphSubgraph: Sendable {
             }
         }
 
-        let distancesToEnd = shortestDistances(from: endID, adjacency: adjacency)
-        guard let shortestDistance = distancesToEnd[startID] else { return nil }
+        let candidateLimit = min(max(maxPaths * 5, 24), 72)
+        var candidates = enumerateDirectedPathCandidates(
+            from: startID,
+            to: endID,
+            kind: .directedForward,
+            adjacency: outgoingAdjacency,
+            reverseAdjacency: incomingAdjacency,
+            nodeMap: nodeMap,
+            maxCandidates: candidateLimit,
+            maxExtraHops: maxExtraHops
+        )
 
-        let maxEdgeCount = shortestDistance + maxExtraHops
-        var pathNodeIDs = [startID]
-        var pathEdgeIDs: [String] = []
-        var visited = Set([startID])
-        var discoveredPaths: [SpiderGraphConnectionPath] = []
-        var isTruncated = false
+        candidates.append(
+            contentsOf: enumerateDirectedPathCandidates(
+                from: endID,
+                to: startID,
+                kind: .directedReverse,
+                adjacency: outgoingAdjacency,
+                reverseAdjacency: incomingAdjacency,
+                nodeMap: nodeMap,
+                maxCandidates: candidateLimit,
+                maxExtraHops: maxExtraHops
+            )
+        )
 
-        func walk(from currentID: String) {
-            guard discoveredPaths.count < maxPaths else {
-                isTruncated = true
-                return
-            }
+        if candidates.isEmpty {
+            candidates = bridgePathCandidates(
+                from: startID,
+                to: endID,
+                outgoingAdjacency: outgoingAdjacency,
+                incomingAdjacency: incomingAdjacency,
+                maxCandidates: candidateLimit
+            )
+        }
 
-            if currentID == endID {
-                discoveredPaths.append(
-                    SpiderGraphConnectionPath(
-                        nodeIDs: pathNodeIDs,
-                        edgeIDs: pathEdgeIDs,
-                        paletteIndex: discoveredPaths.count
-                    )
-                )
-                return
-            }
+        guard !candidates.isEmpty else { return nil }
 
-            for next in adjacency[currentID] ?? [] {
-                guard !visited.contains(next.nodeID) else { continue }
-                guard let remainingDistance = distancesToEnd[next.nodeID] else { continue }
-
-                let projectedEdgeCount = pathEdgeIDs.count + 1 + remainingDistance
-                guard projectedEdgeCount <= maxEdgeCount else { continue }
-
-                visited.insert(next.nodeID)
-                pathNodeIDs.append(next.nodeID)
-                pathEdgeIDs.append(next.edgeID)
-                walk(from: next.nodeID)
-                pathEdgeIDs.removeLast()
-                pathNodeIDs.removeLast()
-                visited.remove(next.nodeID)
-
-                if discoveredPaths.count >= maxPaths {
-                    isTruncated = true
-                    return
+        var uniqueCandidates: [String: ConnectionPathCandidate] = [:]
+        for candidate in candidates {
+            if let existing = uniqueCandidates[candidate.id] {
+                if candidate.score < existing.score {
+                    uniqueCandidates[candidate.id] = candidate
                 }
+            } else {
+                uniqueCandidates[candidate.id] = candidate
             }
         }
 
-        walk(from: startID)
+        let orderedCandidates = uniqueCandidates.values
+            .sorted(by: ConnectionPathCandidate.sort)
+        let isTruncated = orderedCandidates.count > maxPaths
+        let visibleCandidates = Array(orderedCandidates.prefix(maxPaths))
 
-        let sortedPaths = discoveredPaths
-            .sorted { lhs, rhs in
-                if lhs.edgeCount != rhs.edgeCount { return lhs.edgeCount < rhs.edgeCount }
-                return lhs.id < rhs.id
-            }
-            .enumerated()
-            .map { index, path in
-                SpiderGraphConnectionPath(
-                    nodeIDs: path.nodeIDs,
-                    edgeIDs: path.edgeIDs,
-                    paletteIndex: index
-                )
-            }
+        let visiblePaths = visibleCandidates.enumerated().map { index, candidate in
+            SpiderGraphConnectionPath(
+                primaryNodeIDs: candidate.primaryNodeIDs,
+                secondaryNodeIDs: candidate.secondaryNodeIDs,
+                edgeIDs: candidate.edgeIDs,
+                paletteIndex: index,
+                kind: candidate.kind
+            )
+        }
 
-        return SpiderGraphConnectionPathResult(paths: sortedPaths, isTruncated: isTruncated)
+        return SpiderGraphConnectionPathResult(paths: visiblePaths, isTruncated: isTruncated)
     }
 
     private func shortestDistances(
@@ -312,6 +327,337 @@ struct SpiderGraphSubgraph: Sendable {
         }
 
         return distances
+    }
+
+    private func shortestPathTree(
+        from startID: String,
+        adjacency: [String: [(nodeID: String, edgeID: String)]]
+    ) -> (distances: [String: Int], parents: [String: (nodeID: String, edgeID: String)]) {
+        var queue = [startID]
+        var distances: [String: Int] = [startID: 0]
+        var parents: [String: (nodeID: String, edgeID: String)] = [:]
+        var index = 0
+
+        while index < queue.count {
+            let current = queue[index]
+            index += 1
+
+            for next in adjacency[current] ?? [] where distances[next.nodeID] == nil {
+                distances[next.nodeID] = (distances[current] ?? 0) + 1
+                parents[next.nodeID] = (current, next.edgeID)
+                queue.append(next.nodeID)
+            }
+        }
+
+        return (distances, parents)
+    }
+
+    private func enumerateDirectedPathCandidates(
+        from startID: String,
+        to endID: String,
+        kind: SpiderGraphConnectionPathKind,
+        adjacency: [String: [(nodeID: String, edgeID: String)]],
+        reverseAdjacency: [String: [(nodeID: String, edgeID: String)]],
+        nodeMap: [String: SpiderGraphNode],
+        maxCandidates: Int,
+        maxExtraHops: Int
+    ) -> [ConnectionPathCandidate] {
+        let distancesToEnd = shortestDistances(from: endID, adjacency: reverseAdjacency)
+        guard let shortestDistance = distancesToEnd[startID] else { return [] }
+
+        let maxEdgeCount = shortestDistance + maxExtraHops
+        var pathNodeIDs = [startID]
+        var pathEdgeIDs: [String] = []
+        var visited = Set([startID])
+        var discoveredPaths: [ConnectionPathCandidate] = []
+
+        func walk(from currentID: String, accumulatedScore: Int) {
+            guard discoveredPaths.count < maxCandidates else { return }
+
+            if currentID == endID {
+                let detourPenalty = max(0, pathEdgeIDs.count - shortestDistance) * 40
+                discoveredPaths.append(
+                    ConnectionPathCandidate(
+                        primaryNodeIDs: pathNodeIDs,
+                        secondaryNodeIDs: nil,
+                        edgeIDs: pathEdgeIDs,
+                        kind: kind,
+                        score: accumulatedScore + detourPenalty
+                    )
+                )
+                return
+            }
+
+            let sortedNeighbors = (adjacency[currentID] ?? []).sorted { lhs, rhs in
+                let lhsDistance = distancesToEnd[lhs.nodeID] ?? .max
+                let rhsDistance = distancesToEnd[rhs.nodeID] ?? .max
+                if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+                let lhsPenalty = traversalPenalty(
+                    from: currentID,
+                    to: lhs.nodeID,
+                    targetID: endID,
+                    adjacency: adjacency,
+                    reverseAdjacency: reverseAdjacency
+                )
+                let rhsPenalty = traversalPenalty(
+                    from: currentID,
+                    to: rhs.nodeID,
+                    targetID: endID,
+                    adjacency: adjacency,
+                    reverseAdjacency: reverseAdjacency
+                )
+                if lhsPenalty != rhsPenalty { return lhsPenalty < rhsPenalty }
+                let lhsName = nodeMap[lhs.nodeID]?.name ?? lhs.nodeID
+                let rhsName = nodeMap[rhs.nodeID]?.name ?? rhs.nodeID
+                if lhsName != rhsName { return lhsName < rhsName }
+                return lhs.edgeID < rhs.edgeID
+            }
+
+            for next in sortedNeighbors {
+                guard !visited.contains(next.nodeID) else { continue }
+                guard let remainingDistance = distancesToEnd[next.nodeID] else { continue }
+
+                let projectedEdgeCount = pathEdgeIDs.count + 1 + remainingDistance
+                guard projectedEdgeCount <= maxEdgeCount else { continue }
+
+                let stepPenalty = traversalPenalty(
+                    from: currentID,
+                    to: next.nodeID,
+                    targetID: endID,
+                    adjacency: adjacency,
+                    reverseAdjacency: reverseAdjacency
+                )
+
+                visited.insert(next.nodeID)
+                pathNodeIDs.append(next.nodeID)
+                pathEdgeIDs.append(next.edgeID)
+                walk(from: next.nodeID, accumulatedScore: accumulatedScore + stepPenalty)
+                pathEdgeIDs.removeLast()
+                pathNodeIDs.removeLast()
+                visited.remove(next.nodeID)
+
+                if discoveredPaths.count >= maxCandidates {
+                    return
+                }
+            }
+        }
+
+        walk(from: startID, accumulatedScore: 0)
+        return discoveredPaths
+    }
+
+    private func bridgePathCandidates(
+        from startID: String,
+        to endID: String,
+        outgoingAdjacency: [String: [(nodeID: String, edgeID: String)]],
+        incomingAdjacency: [String: [(nodeID: String, edgeID: String)]],
+        maxCandidates: Int
+    ) -> [ConnectionPathCandidate] {
+        let dependencyCandidates = commonDependencyBridgeCandidates(
+            from: startID,
+            to: endID,
+            outgoingAdjacency: outgoingAdjacency,
+            maxCandidates: maxCandidates
+        )
+        let dependentCandidates = commonDependentBridgeCandidates(
+            from: startID,
+            to: endID,
+            incomingAdjacency: incomingAdjacency,
+            maxCandidates: maxCandidates
+        )
+        return (dependencyCandidates + dependentCandidates)
+            .sorted(by: ConnectionPathCandidate.sort)
+    }
+
+    private func commonDependencyBridgeCandidates(
+        from startID: String,
+        to endID: String,
+        outgoingAdjacency: [String: [(nodeID: String, edgeID: String)]],
+        maxCandidates: Int
+    ) -> [ConnectionPathCandidate] {
+        let startTree = shortestPathTree(from: startID, adjacency: outgoingAdjacency)
+        let endTree = shortestPathTree(from: endID, adjacency: outgoingAdjacency)
+        let commonNodeIDs = Set(startTree.distances.keys)
+            .intersection(endTree.distances.keys)
+            .subtracting([startID, endID])
+
+        let pivotNodeIDs = commonNodeIDs
+            .sorted { lhs, rhs in
+                bridgeCandidateScore(nodeID: lhs, distancesA: startTree.distances, distancesB: endTree.distances)
+                    < bridgeCandidateScore(nodeID: rhs, distancesA: startTree.distances, distancesB: endTree.distances)
+            }
+            .prefix(maxCandidates)
+
+        return pivotNodeIDs.compactMap { pivotID in
+            guard
+                let primary = reconstructPath(from: startID, to: pivotID, parents: startTree.parents),
+                let secondary = reconstructPath(from: endID, to: pivotID, parents: endTree.parents)
+            else {
+                return nil
+            }
+
+            return ConnectionPathCandidate(
+                primaryNodeIDs: primary.nodeIDs,
+                secondaryNodeIDs: secondary.nodeIDs,
+                edgeIDs: orderedUnique(primary.edgeIDs + secondary.edgeIDs),
+                kind: .commonDependency,
+                score: bridgeCandidateScore(
+                    nodeID: pivotID,
+                    distancesA: startTree.distances,
+                    distancesB: endTree.distances
+                ) + 120
+            )
+        }
+    }
+
+    private func commonDependentBridgeCandidates(
+        from startID: String,
+        to endID: String,
+        incomingAdjacency: [String: [(nodeID: String, edgeID: String)]],
+        maxCandidates: Int
+    ) -> [ConnectionPathCandidate] {
+        let startTree = shortestPathTree(from: startID, adjacency: incomingAdjacency)
+        let endTree = shortestPathTree(from: endID, adjacency: incomingAdjacency)
+        let commonNodeIDs = Set(startTree.distances.keys)
+            .intersection(endTree.distances.keys)
+            .subtracting([startID, endID])
+
+        let pivotNodeIDs = commonNodeIDs
+            .sorted { lhs, rhs in
+                bridgeCandidateScore(nodeID: lhs, distancesA: startTree.distances, distancesB: endTree.distances)
+                    < bridgeCandidateScore(nodeID: rhs, distancesA: startTree.distances, distancesB: endTree.distances)
+            }
+            .prefix(maxCandidates)
+
+        return pivotNodeIDs.compactMap { pivotID in
+            guard
+                let primary = reconstructReverseTreePath(rootID: startID, targetID: pivotID, parents: startTree.parents),
+                let secondary = reconstructReverseTreePath(rootID: endID, targetID: pivotID, parents: endTree.parents)
+            else {
+                return nil
+            }
+
+            return ConnectionPathCandidate(
+                primaryNodeIDs: primary.nodeIDs,
+                secondaryNodeIDs: secondary.nodeIDs,
+                edgeIDs: orderedUnique(primary.edgeIDs + secondary.edgeIDs),
+                kind: .commonDependent,
+                score: bridgeCandidateScore(
+                    nodeID: pivotID,
+                    distancesA: startTree.distances,
+                    distancesB: endTree.distances
+                ) + 180
+            )
+        }
+    }
+
+    private func bridgeCandidateScore(
+        nodeID: String,
+        distancesA: [String: Int],
+        distancesB: [String: Int]
+    ) -> Int {
+        let totalDistance = (distancesA[nodeID] ?? 0) + (distancesB[nodeID] ?? 0)
+        let nodeLevel = abs(levels[nodeID] ?? 0)
+        let degree = edges.reduce(into: 0) { count, edge in
+            guard edge.from == nodeID || edge.to == nodeID else { return }
+            count += 1
+        }
+        return totalDistance * 30 + nodeLevel * 8 + max(0, degree - 4) * 5
+    }
+
+    private func reconstructPath(
+        from startID: String,
+        to endID: String,
+        parents: [String: (nodeID: String, edgeID: String)]
+    ) -> (nodeIDs: [String], edgeIDs: [String])? {
+        guard startID == endID || parents[endID] != nil else { return nil }
+        var nodeIDs = [endID]
+        var edgeIDs: [String] = []
+        var cursor = endID
+
+        while cursor != startID {
+            guard let parent = parents[cursor] else { return nil }
+            edgeIDs.append(parent.edgeID)
+            nodeIDs.append(parent.nodeID)
+            cursor = parent.nodeID
+        }
+
+        return (nodeIDs.reversed(), edgeIDs.reversed())
+    }
+
+    private func reconstructReverseTreePath(
+        rootID: String,
+        targetID: String,
+        parents: [String: (nodeID: String, edgeID: String)]
+    ) -> (nodeIDs: [String], edgeIDs: [String])? {
+        guard let reversePath = reconstructPath(from: rootID, to: targetID, parents: parents) else {
+            return nil
+        }
+        return (
+            nodeIDs: reversePath.nodeIDs.reversed(),
+            edgeIDs: reversePath.edgeIDs.reversed()
+        )
+    }
+
+    private func traversalPenalty(
+        from fromID: String,
+        to toID: String,
+        targetID: String,
+        adjacency: [String: [(nodeID: String, edgeID: String)]],
+        reverseAdjacency: [String: [(nodeID: String, edgeID: String)]]
+    ) -> Int {
+        let fromLevel = levels[fromID] ?? 0
+        let toLevel = levels[toID] ?? 0
+        let targetLevel = levels[targetID] ?? 0
+        let currentGap = abs(targetLevel - fromLevel)
+        let nextGap = abs(targetLevel - toLevel)
+
+        var penalty = 0
+        if nextGap > currentGap { penalty += 18 }
+        if nextGap == currentGap && toLevel == fromLevel { penalty += 6 }
+
+        let desiredStep = stepDirection(from: fromLevel, to: targetLevel)
+        let actualStep = stepDirection(from: fromLevel, to: toLevel)
+        if desiredStep != 0, actualStep != 0, desiredStep != actualStep {
+            penalty += 12
+        }
+
+        let degree = (adjacency[toID]?.count ?? 0) + (reverseAdjacency[toID]?.count ?? 0)
+        if toID != targetID {
+            penalty += max(0, degree - 4) * 2
+        }
+
+        return penalty
+    }
+
+    private func stepDirection(from startLevel: Int, to endLevel: Int) -> Int {
+        if endLevel > startLevel { return 1 }
+        if endLevel < startLevel { return -1 }
+        return 0
+    }
+
+    private func orderedUnique(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
+    }
+
+    private struct ConnectionPathCandidate {
+        let primaryNodeIDs: [String]
+        let secondaryNodeIDs: [String]?
+        let edgeIDs: [String]
+        let kind: SpiderGraphConnectionPathKind
+        let score: Int
+
+        var id: String {
+            "\(kind.rawValue)::\(edgeIDs.sorted().joined(separator: "|"))"
+        }
+
+        static func sort(_ lhs: ConnectionPathCandidate, _ rhs: ConnectionPathCandidate) -> Bool {
+            if lhs.score != rhs.score { return lhs.score < rhs.score }
+            if lhs.edgeIDs.count != rhs.edgeIDs.count { return lhs.edgeIDs.count < rhs.edgeIDs.count }
+            if lhs.kind.rawValue != rhs.kind.rawValue { return lhs.kind.rawValue < rhs.kind.rawValue }
+            return lhs.id < rhs.id
+        }
     }
 
     private static func makeLevelGroups(
@@ -369,14 +715,6 @@ struct SpiderGraphSubgraph: Sendable {
         edges: [SpiderGraphEdge],
         layout: SpiderGraphCanvasLayout
     ) -> [String: SpiderGraphEdgeEndpoints] {
-        struct EdgeLayoutInput {
-            let edge: SpiderGraphEdge
-            let fromFrame: CGRect
-            let toFrame: CGRect
-            let sourceSide: SpiderGraphAnchorSide
-            let targetSide: SpiderGraphAnchorSide
-        }
-
         let inputs: [EdgeLayoutInput] = edges.compactMap { edge in
             guard
                 let fromFrame = layout.nodeFrames[edge.from],
@@ -385,8 +723,15 @@ struct SpiderGraphSubgraph: Sendable {
                 return nil
             }
 
-            let sourceSide: SpiderGraphAnchorSide = fromFrame.midX <= toFrame.midX ? .right : .left
-            let targetSide: SpiderGraphAnchorSide = sourceSide == .right ? .left : .right
+            let sourceSide: SpiderGraphAnchorSide
+            let targetSide: SpiderGraphAnchorSide
+            if shouldUseVerticalAnchors(from: fromFrame, to: toFrame) {
+                sourceSide = fromFrame.midY <= toFrame.midY ? .bottom : .top
+                targetSide = sourceSide == .bottom ? .top : .bottom
+            } else {
+                sourceSide = fromFrame.midX <= toFrame.midX ? .right : .left
+                targetSide = sourceSide == .right ? .left : .right
+            }
             return EdgeLayoutInput(
                 edge: edge,
                 fromFrame: fromFrame,
@@ -398,6 +743,7 @@ struct SpiderGraphSubgraph: Sendable {
 
         var sourceOffsets: [String: CGFloat] = [:]
         var targetOffsets: [String: CGFloat] = [:]
+        let nodeMixedFlowRoles = makeNodeMixedFlowRoles(inputs: inputs)
 
         let sourceGroups = Dictionary(grouping: inputs) { input in
             SpiderGraphEdgePortKey(nodeID: input.edge.from, side: input.sourceSide)
@@ -420,7 +766,14 @@ struct SpiderGraphSubgraph: Sendable {
             }
 
             for (index, input) in sorted.enumerated() {
-                sourceOffsets[input.edge.id] = portOffset(index: index, count: sorted.count, frame: input.fromFrame)
+                sourceOffsets[input.edge.id] = portOffset(
+                    index: index,
+                    count: sorted.count,
+                    frame: input.fromFrame,
+                    side: input.sourceSide,
+                    role: .outgoing,
+                    separateFlows: nodeMixedFlowRoles.contains(input.edge.from)
+                )
             }
         }
 
@@ -438,7 +791,14 @@ struct SpiderGraphSubgraph: Sendable {
             }
 
             for (index, input) in sorted.enumerated() {
-                targetOffsets[input.edge.id] = portOffset(index: index, count: sorted.count, frame: input.toFrame)
+                targetOffsets[input.edge.id] = portOffset(
+                    index: index,
+                    count: sorted.count,
+                    frame: input.toFrame,
+                    side: input.targetSide,
+                    role: .incoming,
+                    separateFlows: nodeMixedFlowRoles.contains(input.edge.to)
+                )
             }
         }
 
@@ -451,7 +811,12 @@ struct SpiderGraphSubgraph: Sendable {
                 in: input.toFrame,
                 yOffset: targetOffsets[input.edge.id] ?? 0
             )
-            endpoints[input.edge.id] = SpiderGraphEdgeEndpoints(start: start, end: end)
+            endpoints[input.edge.id] = SpiderGraphEdgeEndpoints(
+                start: start,
+                end: end,
+                sourceSide: input.sourceSide,
+                targetSide: input.targetSide
+            )
         }
     }
 
@@ -463,12 +828,82 @@ struct SpiderGraphSubgraph: Sendable {
         (counterpartFrame.midY, counterpartFrame.midX, counterpartNodeID, edgeID)
     }
 
-    private static func portOffset(index: Int, count: Int, frame: CGRect) -> CGFloat {
+    private static func shouldUseVerticalAnchors(from fromFrame: CGRect, to toFrame: CGRect) -> Bool {
+        let horizontalOverlap = min(fromFrame.maxX, toFrame.maxX) - max(fromFrame.minX, toFrame.minX)
+        let minimumRequiredOverlap = min(fromFrame.width, toFrame.width) * 0.28
+        let centerDeltaX = abs(fromFrame.midX - toFrame.midX)
+        let centerDeltaY = abs(fromFrame.midY - toFrame.midY)
+        let sameColumnThreshold = min(fromFrame.width, toFrame.width) * 0.32
+        let stackedDistance = max(min(fromFrame.height, toFrame.height) * 0.45, 28)
+        let isSameColumn = centerDeltaX <= sameColumnThreshold
+        let hasMeaningfulOverlap = horizontalOverlap >= minimumRequiredOverlap
+        let isStacked = centerDeltaY >= stackedDistance
+        return (isSameColumn || hasMeaningfulOverlap) && isStacked
+    }
+
+    private static func makeNodeMixedFlowRoles(inputs: [EdgeLayoutInput]) -> Set<String> {
+        var rolesByNode: [String: Set<SpiderGraphEdgePortRole>] = [:]
+        for input in inputs {
+            rolesByNode[input.edge.from, default: []].insert(.outgoing)
+            rolesByNode[input.edge.to, default: []].insert(.incoming)
+        }
+
+        return Set(
+            rolesByNode.compactMap { nodeID, roles in
+                roles.count > 1 ? nodeID : nil
+            }
+        )
+    }
+
+    private static func portOffset(
+        index: Int,
+        count: Int,
+        frame: CGRect,
+        side: SpiderGraphAnchorSide,
+        role: SpiderGraphEdgePortRole,
+        separateFlows: Bool
+    ) -> CGFloat {
+        if separateFlows {
+            return separatedPortOffset(index: index, count: count, frame: frame, side: side, role: role)
+        }
+
         guard count > 1 else { return 0 }
         let halfSpan = CGFloat(count - 1) / 2
-        let maxSpread = min(frame.height * 0.32, 26)
+        let axisLength = side.isHorizontal ? frame.height : frame.width
+        let maxSpread = min(axisLength * 0.32, 26)
         let step = min(12, maxSpread / max(halfSpan, 1))
         return (CGFloat(index) - halfSpan) * step
+    }
+
+    private static func separatedPortOffset(
+        index: Int,
+        count: Int,
+        frame: CGRect,
+        side: SpiderGraphAnchorSide,
+        role: SpiderGraphEdgePortRole
+    ) -> CGFloat {
+        let crossAxisLength = side.isHorizontal ? frame.height : frame.width
+        let halfCrossAxis = crossAxisLength / 2
+        let edgeInset = min(crossAxisLength * 0.12, 8)
+        let laneGap = min(crossAxisLength * 0.12, 8)
+        let usableStart = -(halfCrossAxis - edgeInset)
+        let usableEnd = halfCrossAxis - edgeInset
+
+        let range: ClosedRange<CGFloat> = switch role {
+        case .outgoing:
+            usableStart...(min(-laneGap, usableEnd))
+        case .incoming:
+            max(laneGap, usableStart)...usableEnd
+        }
+
+        let clampedLower = min(range.lowerBound, range.upperBound)
+        let clampedUpper = max(range.lowerBound, range.upperBound)
+        if count <= 1 {
+            return (clampedLower + clampedUpper) / 2
+        }
+
+        let step = (clampedUpper - clampedLower) / CGFloat(max(count - 1, 1))
+        return clampedLower + CGFloat(index) * step
     }
 }
 
@@ -477,28 +912,116 @@ struct SpiderGraphConnectionPathResult: Sendable {
     let isTruncated: Bool
 }
 
+enum SpiderGraphConnectionPathKind: String, Hashable, Sendable {
+    case directedForward
+    case directedReverse
+    case commonDependency
+    case commonDependent
+
+    var badgeText: String {
+        switch self {
+        case .directedForward:
+            return "직접 경로"
+        case .directedReverse:
+            return "역방향 경로"
+        case .commonDependency:
+            return "공통 의존성"
+        case .commonDependent:
+            return "공통 역의존성"
+        }
+    }
+}
+
 struct SpiderGraphConnectionPath: Identifiable, Hashable, Sendable {
-    let nodeIDs: [String]
+    let primaryNodeIDs: [String]
+    let secondaryNodeIDs: [String]?
     let edgeIDs: [String]
     let paletteIndex: Int
+    let kind: SpiderGraphConnectionPathKind
 
     var id: String {
-        nodeIDs.joined(separator: "->")
+        "\(kind.rawValue)::\(edgeIDs.sorted().joined(separator: "|"))"
     }
 
     var edgeCount: Int {
         edgeIDs.count
     }
 
+    var nodeIDs: [String] {
+        let combined = primaryNodeIDs + (secondaryNodeIDs ?? [])
+        var seen = Set<String>()
+        return combined.filter { seen.insert($0).inserted }
+    }
+
     func preview(using nodeMap: [String: SpiderGraphNode], visibleNameCount: Int = 5) -> String {
-        let names = nodeIDs.map { nodeMap[$0]?.name ?? $0 }
+        switch kind {
+        case .directedForward, .directedReverse:
+            return previewSequence(
+                primaryNodeIDs.map { nodeMap[$0]?.name ?? $0 },
+                connector: " -> ",
+                visibleNameCount: visibleNameCount
+            )
+        case .commonDependency:
+            let leading = primaryNodeIDs.map { nodeMap[$0]?.name ?? $0 }
+            let trailing = Array((secondaryNodeIDs ?? []).dropLast().reversed()).map { nodeMap[$0]?.name ?? $0 }
+            return previewBridge(
+                leading: leading,
+                trailing: trailing,
+                leadingConnector: " -> ",
+                bridgeConnector: " <- ",
+                trailingConnector: " <- ",
+                visibleNameCount: visibleNameCount
+            )
+        case .commonDependent:
+            let leading = Array(primaryNodeIDs.reversed()).map { nodeMap[$0]?.name ?? $0 }
+            let trailing = Array((secondaryNodeIDs ?? []).dropFirst()).map { nodeMap[$0]?.name ?? $0 }
+            return previewBridge(
+                leading: leading,
+                trailing: trailing,
+                leadingConnector: " <- ",
+                bridgeConnector: " -> ",
+                trailingConnector: " -> ",
+                visibleNameCount: visibleNameCount
+            )
+        }
+    }
+
+    private func previewSequence(
+        _ names: [String],
+        connector: String,
+        visibleNameCount: Int
+    ) -> String {
         guard names.count > visibleNameCount else {
-            return names.joined(separator: " -> ")
+            return names.joined(separator: connector)
         }
 
         let prefix = names.prefix(2)
         let suffix = names.suffix(2)
-        return Array(prefix + ["..."] + suffix).joined(separator: " -> ")
+        return Array(prefix + ["..."] + suffix).joined(separator: connector)
+    }
+
+    private func previewBridge(
+        leading: [String],
+        trailing: [String],
+        leadingConnector: String,
+        bridgeConnector: String,
+        trailingConnector: String,
+        visibleNameCount: Int
+    ) -> String {
+        if leading.count + trailing.count <= visibleNameCount {
+            let left = leading.joined(separator: leadingConnector)
+            let right = trailing.joined(separator: trailingConnector)
+            if left.isEmpty { return right }
+            if right.isEmpty { return left }
+            return left + bridgeConnector + right
+        }
+
+        let left = Array(leading.prefix(2)).joined(separator: leadingConnector)
+        let right = Array(trailing.suffix(2)).joined(separator: trailingConnector)
+        if right.isEmpty {
+            return left + leadingConnector + "..."
+        }
+        return left + leadingConnector + "..." + bridgeConnector + "..." + trailingConnector + right
     }
 }
 
@@ -543,6 +1066,8 @@ struct SpiderGraphLevelEdge: Identifiable, Hashable, Sendable {
 struct SpiderGraphEdgeEndpoints: Hashable, Sendable {
     let start: CGPoint
     let end: CGPoint
+    let sourceSide: SpiderGraphAnchorSide
+    let targetSide: SpiderGraphAnchorSide
 }
 
 private struct SpiderGraphLevelPair: Hashable, Sendable {
@@ -555,15 +1080,58 @@ private struct SpiderGraphEdgePortKey: Hashable, Sendable {
     let side: SpiderGraphAnchorSide
 }
 
+private struct EdgeLayoutInput: Sendable {
+    let edge: SpiderGraphEdge
+    let fromFrame: CGRect
+    let toFrame: CGRect
+    let sourceSide: SpiderGraphAnchorSide
+    let targetSide: SpiderGraphAnchorSide
+}
+
+private enum SpiderGraphEdgePortRole: Sendable {
+    case outgoing
+    case incoming
+}
+
 enum SpiderGraphAnchorSide: Hashable, Sendable {
     case left
     case right
+    case top
+    case bottom
+
+    var isHorizontal: Bool {
+        switch self {
+        case .left, .right:
+            return true
+        case .top, .bottom:
+            return false
+        }
+    }
+
+    var outwardUnitVector: CGPoint {
+        switch self {
+        case .left:
+            return CGPoint(x: -1, y: 0)
+        case .right:
+            return CGPoint(x: 1, y: 0)
+        case .top:
+            return CGPoint(x: 0, y: -1)
+        case .bottom:
+            return CGPoint(x: 0, y: 1)
+        }
+    }
 
     func anchorPoint(in frame: CGRect, yOffset: CGFloat) -> CGPoint {
-        CGPoint(
-            x: self == .right ? frame.maxX : frame.minX,
-            y: frame.midY + yOffset
-        )
+        switch self {
+        case .left:
+            return CGPoint(x: frame.minX, y: frame.midY + yOffset)
+        case .right:
+            return CGPoint(x: frame.maxX, y: frame.midY + yOffset)
+        case .top:
+            return CGPoint(x: frame.midX + yOffset, y: frame.minY)
+        case .bottom:
+            return CGPoint(x: frame.midX + yOffset, y: frame.maxY)
+        }
     }
 }
 
@@ -736,6 +1304,28 @@ struct SpiderGraph: Hashable, Sendable {
             .sorted(by: SpiderGraph.nodeSort)
     }
 
+    func maxReachableDepth(
+        centeredOn rootID: String,
+        direction: GraphDirection,
+        includeExternal: Bool
+    ) -> Int {
+        guard nodeMap[rootID] != nil else { return 0 }
+
+        func allows(_ nodeID: String) -> Bool {
+            guard let node = nodeMap[nodeID] else { return false }
+            return includeExternal || !node.isExternal || nodeID == rootID
+        }
+
+        var maxDistance = 0
+        if direction != .dependencies {
+            maxDistance = max(maxDistance, bfs(from: rootID, adjacency: incoming, maxDepth: nil, allows: allows).values.max() ?? 0)
+        }
+        if direction != .dependents {
+            maxDistance = max(maxDistance, bfs(from: rootID, adjacency: outgoing, maxDepth: nil, allows: allows).values.max() ?? 0)
+        }
+        return maxDistance
+    }
+
     func subgraph(
         centeredOn rootID: String,
         direction: GraphDirection,
@@ -753,12 +1343,12 @@ struct SpiderGraph: Hashable, Sendable {
 
         var levels: [String: Int] = [rootID: 0]
         if direction != .dependencies {
-            for (nodeID, distance) in bfs(from: rootID, adjacency: incoming, depth: depth, allows: allows) {
+            for (nodeID, distance) in bfs(from: rootID, adjacency: incoming, maxDepth: depth.maxDepth, allows: allows) {
                 levels[nodeID] = -distance
             }
         }
         if direction != .dependents {
-            for (nodeID, distance) in bfs(from: rootID, adjacency: outgoing, depth: depth, allows: allows) {
+            for (nodeID, distance) in bfs(from: rootID, adjacency: outgoing, maxDepth: depth.maxDepth, allows: allows) {
                 let current = levels[nodeID]
                 if current == nil || abs(distance) < abs(current ?? distance) {
                     levels[nodeID] = distance
@@ -810,10 +1400,10 @@ struct SpiderGraph: Hashable, Sendable {
     private func bfs(
         from startID: String,
         adjacency: [String: [String]],
-        depth: GraphDepth,
+        maxDepth: Int?,
         allows: (String) -> Bool
     ) -> [String: Int] {
-        let maxDepth = depth.maxDepth ?? Int.max
+        let maxDepth = maxDepth ?? Int.max
         var seen: [String: Int] = [:]
         var queue: [(nodeID: String, distance: Int)] = [(startID, 0)]
         var index = 0

@@ -85,7 +85,7 @@ struct ContentView: View {
                     }
 
                     Picker("깊이", selection: $viewModel.depth) {
-                        ForEach(GraphDepth.allCases) { depth in
+                        ForEach(viewModel.availableDepthOptions) { depth in
                             Text(depth.title).tag(depth)
                         }
                     }
@@ -193,6 +193,10 @@ struct ContentView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                    }
+
+                    if let focusedNode = viewModel.selectedNode {
+                        relatedNodeSearchSection(focusedNode: focusedNode)
                     }
 
                     if let focusedNode = viewModel.selectedNode,
@@ -420,6 +424,15 @@ struct ContentView: View {
                                 Text("경로 \(path.paletteIndex + 1)")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.primary)
+                                Text(path.kind.badgeText)
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(GraphPathPalette.color(at: path.paletteIndex))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        GraphPathPalette.color(at: path.paletteIndex).opacity(0.14),
+                                        in: Capsule()
+                                    )
                                 Spacer()
                                 Text("\(path.edgeCount) hops")
                                     .font(.caption)
@@ -440,6 +453,63 @@ struct ContentView: View {
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func relatedNodeSearchSection(focusedNode: SpiderGraphNode) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("연관 노드 검색")
+                    .font(.headline)
+                Spacer()
+                if let selectedNode = viewModel.graphSelectedNode {
+                    Button("선택 해제") {
+                        viewModel.clearRelatedNodeSelection()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Text(selectedNode.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("\(focusedNode.name) 기준으로 현재 그래프 범위 안에서 비교할 노드를 찾습니다.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextField("연관 노드 검색", text: $viewModel.relatedNodeSearchText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit {
+                    viewModel.selectFirstMatchingRelatedNode()
+                }
+
+            if viewModel.relatedNodeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("이름이나 프로젝트명으로 검색하면 현재 그래프에 보이는 노드만 후보로 나옵니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if viewModel.filteredRelatedNodes.isEmpty {
+                Text("현재 필터 범위에서 일치하는 노드가 없습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    RelatedNodeSearchResults(
+                        nodes: viewModel.filteredRelatedNodesPreview,
+                        selectedNodeID: viewModel.visibleGraphSelectedNodeID,
+                        onSelect: { nodeID in
+                            viewModel.selectRelatedNode(nodeID)
+                        }
+                    )
+
+                    if viewModel.filteredRelatedNodes.count > 8 {
+                        Text("검색 결과 \(viewModel.filteredRelatedNodes.count)개 중 상위 8개만 표시합니다. 더 좁게 검색해보세요.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
     }
@@ -519,6 +589,54 @@ struct ContentView: View {
         case .mixed:
             return .purple
         }
+    }
+}
+
+private struct RelatedNodeSearchResults: View {
+    let nodes: [SpiderGraphNode]
+    let selectedNodeID: String?
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        Group {
+            if let node = node(at: 0) { relatedNodeButton(node) }
+            if let node = node(at: 1) { relatedNodeButton(node) }
+            if let node = node(at: 2) { relatedNodeButton(node) }
+            if let node = node(at: 3) { relatedNodeButton(node) }
+            if let node = node(at: 4) { relatedNodeButton(node) }
+            if let node = node(at: 5) { relatedNodeButton(node) }
+            if let node = node(at: 6) { relatedNodeButton(node) }
+            if let node = node(at: 7) { relatedNodeButton(node) }
+        }
+    }
+
+    private func node(at index: Int) -> SpiderGraphNode? {
+        guard nodes.indices.contains(index) else { return nil }
+        return nodes[index]
+    }
+
+    private func relatedNodeButton(_ node: SpiderGraphNode) -> some View {
+        Button {
+            onSelect(node.id)
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(node.name)
+                        .foregroundStyle(.primary)
+                    Text(node.projectLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if selectedNodeID == node.id {
+                    Image(systemName: "scope")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
 

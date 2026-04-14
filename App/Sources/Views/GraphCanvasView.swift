@@ -78,12 +78,16 @@ struct GraphCanvasView: View {
         )
     }
 
+    private var shouldUseSelectiveRouting: Bool {
+        subgraph.nodes.count > 80 || subgraph.edges.count > 140
+    }
+
     private var expandedEdgeRenderModels: [ExpandedEdgeRenderModel] {
         subgraph.edges.compactMap { edge in
             guard let endpoints = subgraph.edgeEndpoints[edge.id] else { return nil }
 
             let matchingPaths = edgeConnectionPaths[edge.id] ?? []
-            let geometry = EdgeCurveGeometry(start: endpoints.start, end: endpoints.end)
+            let geometry = expandedEdgeGeometry(for: edge, endpoints: endpoints, matchingPaths: matchingPaths)
             let baseArrowSize = baseArrowSize(for: edge)
             let baseLayer = ExpandedEdgeLayer(
                 geometry: geometry,
@@ -118,7 +122,7 @@ struct GraphCanvasView: View {
                 return nil
             }
 
-            let geometry = EdgeCurveGeometry(from: from, to: to)
+            let geometry = EdgePathGeometry.curve(EdgeCurveGeometry(from: from, to: to))
             return GroupedEdgeRenderModel(
                 id: edge.id,
                 geometry: geometry,
@@ -383,6 +387,289 @@ struct GraphCanvasView: View {
         max(7, arrowSize + 1.5)
     }
 
+    private func expandedEdgeGeometry(
+        for edge: SpiderGraphEdge,
+        endpoints: SpiderGraphEdgeEndpoints,
+        matchingPaths: [SpiderGraphConnectionPath]
+    ) -> EdgePathGeometry {
+        let directGeometry = preferredExpandedDirectGeometry(for: endpoints)
+        guard shouldRouteAroundObstacles(for: edge, matchingPaths: matchingPaths) else {
+            return directGeometry
+        }
+        let obstacles = expandedObstacleFrames(for: edge, endpoints: endpoints)
+        let directIntersections = intersectingObstacles(for: directGeometry, obstacles: obstacles)
+        guard !directIntersections.isEmpty else {
+            return directGeometry
+        }
+
+        let obstacleBounds = directIntersections.reduce(into: directIntersections[0]) { partialResult, frame in
+            partialResult = partialResult.union(frame)
+        }
+        var bestCandidate: (geometry: EdgePathGeometry, collisionCount: Int, distanceCost: CGFloat)?
+
+        if endpoints.sourceSide.isHorizontal && endpoints.targetSide.isHorizontal {
+            let horizontalDistance = abs(endpoints.end.x - endpoints.start.x)
+            let baseHorizontalInset = min(max(horizontalDistance * 0.2, 28), 56)
+            let insetCandidates = [
+                baseHorizontalInset,
+                min(baseHorizontalInset + 24, max(72, horizontalDistance * 0.4)),
+                min(baseHorizontalInset + 52, max(96, horizontalDistance * 0.55))
+            ]
+
+            let minStartEndY = min(endpoints.start.y, endpoints.end.y)
+            let maxStartEndY = max(endpoints.start.y, endpoints.end.y)
+            let nearLaneMargin: CGFloat = 22
+            let farLaneMargin: CGFloat = 36
+            let obstacleLanes = directIntersections.flatMap { frame in
+                [
+                    max(18, frame.minY - nearLaneMargin),
+                    min(layout.canvasSize.height - 18, frame.maxY + nearLaneMargin)
+                ]
+            }
+            let topLane = max(18, obstacleBounds.minY - farLaneMargin)
+            let bottomLane = min(layout.canvasSize.height - 18, obstacleBounds.maxY + farLaneMargin)
+            let farTopLane = max(18, min(topLane - 28, minStartEndY - 24))
+            let farBottomLane = min(layout.canvasSize.height - 18, max(bottomLane + 28, maxStartEndY + 24))
+            let laneCandidates = uniqueLaneValues(obstacleLanes + [topLane, bottomLane, farTopLane, farBottomLane])
+                .sorted {
+                    laneDistanceCost(for: endpoints, laneY: $0) < laneDistanceCost(for: endpoints, laneY: $1)
+                }
+
+            for laneY in laneCandidates {
+                for horizontalInset in insetCandidates {
+                    let startLead = offsetPoint(endpoints.start, toward: endpoints.sourceSide, distance: horizontalInset)
+                    let endLead = offsetPoint(endpoints.end, toward: endpoints.targetSide, distance: horizontalInset)
+                    let rawPoints: [CGPoint] = [
+                        endpoints.start,
+                        startLead,
+                        CGPoint(x: startLead.x, y: laneY),
+                        CGPoint(x: endLead.x, y: laneY),
+                        endLead,
+                        endpoints.end
+                    ]
+                    let points = deduplicatedRoutePoints(rawPoints)
+                    guard points.count >= 2 else { continue }
+
+                    let geometry = EdgePathGeometry.routed(EdgeRoutedGeometry(points: points))
+                    let collisions = intersectingObstacles(for: geometry, obstacles: obstacles)
+                    if collisions.isEmpty {
+                        return geometry
+                    }
+
+                    let candidate = (
+                        geometry: geometry,
+                        collisionCount: collisions.count,
+                        distanceCost: laneDistanceCost(for: endpoints, laneY: laneY) + centerBias(for: endpoints, laneY: laneY) * 0.45 + horizontalInset * 0.12
+                    )
+
+                    if let currentBest = bestCandidate {
+                        if candidate.collisionCount < currentBest.collisionCount ||
+                            (candidate.collisionCount == currentBest.collisionCount && candidate.distanceCost < currentBest.distanceCost) {
+                            bestCandidate = candidate
+                        }
+                    } else {
+                        bestCandidate = candidate
+                    }
+                }
+            }
+        } else {
+            let verticalDistance = abs(endpoints.end.y - endpoints.start.y)
+            let baseVerticalInset = min(max(verticalDistance * 0.2, 26), 54)
+            let insetCandidates = [
+                baseVerticalInset,
+                min(baseVerticalInset + 20, max(68, verticalDistance * 0.38)),
+                min(baseVerticalInset + 44, max(92, verticalDistance * 0.52))
+            ]
+
+            let minStartEndX = min(endpoints.start.x, endpoints.end.x)
+            let maxStartEndX = max(endpoints.start.x, endpoints.end.x)
+            let nearLaneMargin: CGFloat = 22
+            let farLaneMargin: CGFloat = 36
+            let obstacleLanes = directIntersections.flatMap { frame in
+                [
+                    max(18, frame.minX - nearLaneMargin),
+                    min(layout.canvasSize.width - 18, frame.maxX + nearLaneMargin)
+                ]
+            }
+            let leftLane = max(18, obstacleBounds.minX - farLaneMargin)
+            let rightLane = min(layout.canvasSize.width - 18, obstacleBounds.maxX + farLaneMargin)
+            let farLeftLane = max(18, min(leftLane - 28, minStartEndX - 24))
+            let farRightLane = min(layout.canvasSize.width - 18, max(rightLane + 28, maxStartEndX + 24))
+            let laneCandidates = uniqueLaneValues(obstacleLanes + [leftLane, rightLane, farLeftLane, farRightLane])
+                .sorted {
+                    laneDistanceCost(for: endpoints, laneX: $0) < laneDistanceCost(for: endpoints, laneX: $1)
+                }
+
+            for laneX in laneCandidates {
+                for verticalInset in insetCandidates {
+                    let startLead = offsetPoint(endpoints.start, toward: endpoints.sourceSide, distance: verticalInset)
+                    let endLead = offsetPoint(endpoints.end, toward: endpoints.targetSide, distance: verticalInset)
+                    let rawPoints: [CGPoint] = [
+                        endpoints.start,
+                        startLead,
+                        CGPoint(x: laneX, y: startLead.y),
+                        CGPoint(x: laneX, y: endLead.y),
+                        endLead,
+                        endpoints.end
+                    ]
+                    let points = deduplicatedRoutePoints(rawPoints)
+                    guard points.count >= 2 else { continue }
+
+                    let geometry = EdgePathGeometry.routed(EdgeRoutedGeometry(points: points))
+                    let collisions = intersectingObstacles(for: geometry, obstacles: obstacles)
+                    if collisions.isEmpty {
+                        return geometry
+                    }
+
+                    let candidate = (
+                        geometry: geometry,
+                        collisionCount: collisions.count,
+                        distanceCost: laneDistanceCost(for: endpoints, laneX: laneX) + centerBias(for: endpoints, laneX: laneX) * 0.45 + verticalInset * 0.12
+                    )
+
+                    if let currentBest = bestCandidate {
+                        if candidate.collisionCount < currentBest.collisionCount ||
+                            (candidate.collisionCount == currentBest.collisionCount && candidate.distanceCost < currentBest.distanceCost) {
+                            bestCandidate = candidate
+                        }
+                    } else {
+                        bestCandidate = candidate
+                    }
+                }
+            }
+        }
+
+        return bestCandidate?.geometry ?? directGeometry
+    }
+
+    private func preferredExpandedDirectGeometry(for endpoints: SpiderGraphEdgeEndpoints) -> EdgePathGeometry {
+        if endpoints.sourceSide.isHorizontal && endpoints.targetSide.isHorizontal {
+            let leadDistance: CGFloat = max(min(abs(endpoints.end.x - endpoints.start.x) * 0.18, 34), 18)
+            let startLead = offsetPoint(endpoints.start, toward: endpoints.sourceSide, distance: leadDistance)
+            let endLead = offsetPoint(endpoints.end, toward: endpoints.targetSide, distance: leadDistance)
+            guard abs(startLead.y - endLead.y) > 6 else {
+                return .routed(EdgeRoutedGeometry(points: deduplicatedRoutePoints([endpoints.start, startLead, endLead, endpoints.end])))
+            }
+
+            let midpointX = startLead.x + (endLead.x - startLead.x) / 2
+            let points = deduplicatedRoutePoints([
+                endpoints.start,
+                startLead,
+                CGPoint(x: midpointX, y: startLead.y),
+                CGPoint(x: midpointX, y: endLead.y),
+                endLead,
+                endpoints.end
+            ])
+            return .routed(EdgeRoutedGeometry(points: points))
+        }
+
+        let leadDistance: CGFloat = max(min(abs(endpoints.end.y - endpoints.start.y) * 0.22, 42), 24)
+        let startLead = offsetPoint(endpoints.start, toward: endpoints.sourceSide, distance: leadDistance)
+        let endLead = offsetPoint(endpoints.end, toward: endpoints.targetSide, distance: leadDistance)
+        let midpointY = startLead.y + (endLead.y - startLead.y) / 2
+        let rawPoints = [
+            endpoints.start,
+            startLead,
+            CGPoint(x: startLead.x, y: midpointY),
+            CGPoint(x: endLead.x, y: midpointY),
+            endLead,
+            endpoints.end
+        ]
+        let points = deduplicatedRoutePoints(rawPoints)
+
+        guard points.count >= 2 else {
+            return .curve(EdgeCurveGeometry(start: endpoints.start, end: endpoints.end))
+        }
+
+        return .routed(EdgeRoutedGeometry(points: points))
+    }
+
+    private func expandedObstacleFrames(
+        for edge: SpiderGraphEdge,
+        endpoints: SpiderGraphEdgeEndpoints
+    ) -> [CGRect] {
+        let usesHorizontalAnchors = endpoints.sourceSide.isHorizontal && endpoints.targetSide.isHorizontal
+        let horizontalPadding = usesHorizontalAnchors ? CGSize(width: 10, height: 14) : CGSize(width: 16, height: 8)
+        return layout.nodeFrames.compactMap { nodeID, frame in
+            guard nodeID != edge.from, nodeID != edge.to else { return nil }
+            return frame.insetBy(dx: -horizontalPadding.width, dy: -horizontalPadding.height)
+        }
+    }
+
+    private func intersectingObstacles(
+        for geometry: EdgePathGeometry,
+        obstacles: [CGRect]
+    ) -> [CGRect] {
+        obstacles.filter { geometry.intersects($0) }
+    }
+
+    private func laneDistanceCost(
+        for endpoints: SpiderGraphEdgeEndpoints,
+        laneY: CGFloat
+    ) -> CGFloat {
+        abs(endpoints.start.y - laneY) + abs(endpoints.end.y - laneY)
+    }
+
+    private func laneDistanceCost(
+        for endpoints: SpiderGraphEdgeEndpoints,
+        laneX: CGFloat
+    ) -> CGFloat {
+        abs(endpoints.start.x - laneX) + abs(endpoints.end.x - laneX)
+    }
+
+    private func centerBias(
+        for endpoints: SpiderGraphEdgeEndpoints,
+        laneY: CGFloat
+    ) -> CGFloat {
+        abs(((endpoints.start.y + endpoints.end.y) / 2) - laneY)
+    }
+
+    private func centerBias(
+        for endpoints: SpiderGraphEdgeEndpoints,
+        laneX: CGFloat
+    ) -> CGFloat {
+        abs(((endpoints.start.x + endpoints.end.x) / 2) - laneX)
+    }
+
+    private func uniqueLaneValues(_ values: [CGFloat]) -> [CGFloat] {
+        values.reduce(into: [CGFloat]()) { lanes, value in
+            guard !lanes.contains(where: { abs($0 - value) < 1 }) else { return }
+            lanes.append(value)
+        }
+    }
+
+    private func deduplicatedRoutePoints(_ points: [CGPoint]) -> [CGPoint] {
+        points.reduce(into: [CGPoint]()) { partialResult, point in
+            guard partialResult.last != point else { return }
+            partialResult.append(point)
+        }
+    }
+
+    private func offsetPoint(_ point: CGPoint, toward side: SpiderGraphAnchorSide, distance: CGFloat) -> CGPoint {
+        let vector = side.outwardUnitVector
+        return CGPoint(
+            x: point.x + vector.x * distance,
+            y: point.y + vector.y * distance
+        )
+    }
+
+    private func shouldRouteAroundObstacles(
+        for edge: SpiderGraphEdge,
+        matchingPaths: [SpiderGraphConnectionPath]
+    ) -> Bool {
+        if !shouldUseSelectiveRouting {
+            return true
+        }
+
+        if !matchingPaths.isEmpty {
+            return true
+        }
+
+        let isFocusedEdge = edge.from == focusedNodeID || edge.to == focusedNodeID
+        let isGraphSelectedEdge = edge.from == graphSelectedNodeID || edge.to == graphSelectedNodeID
+        return isFocusedEdge || isGraphSelectedEdge
+    }
+
     private func drawExpandedEdges(in context: GraphicsContext) {
         for model in expandedEdgeRenderModels {
             var layerContext = context
@@ -396,7 +683,7 @@ struct GraphCanvasView: View {
     private func drawGroupedEdges(in context: GraphicsContext) {
         let context = context
         for model in groupedEdgeRenderModels {
-            let linePath = EdgeShape(geometry: model.geometry.trimmedEnd(by: arrowLineInset(for: model.arrowSize))).path(in: .zero)
+            let linePath = model.geometry.trimmedEnd(by: arrowLineInset(for: model.arrowSize)).path()
             context.stroke(
                 linePath,
                 with: .color(model.strokeColor),
@@ -413,7 +700,7 @@ struct GraphCanvasView: View {
     }
 
     private func drawEdgeLayer(_ layer: ExpandedEdgeLayer, in context: inout GraphicsContext) {
-        let linePath = EdgeShape(geometry: layer.geometry.trimmedEnd(by: arrowLineInset(for: layer.arrowSize))).path(in: .zero)
+        let linePath = layer.geometry.trimmedEnd(by: arrowLineInset(for: layer.arrowSize)).path()
         context.stroke(linePath, with: .color(layer.color), style: layer.strokeStyle)
 
         let arrowPath = ArrowHeadShape(
@@ -448,7 +735,7 @@ private struct GraphNodeCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(background)
+            .background(cardBackground)
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(borderColor, lineWidth: borderWidth)
@@ -458,20 +745,33 @@ private struct GraphNodeCard: View {
         .buttonStyle(.plain)
     }
 
-    private var background: some ShapeStyle {
+    private var cardBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        return shape
+            .fill(baseBackgroundColor)
+            .overlay {
+                shape.fill(highlightOverlayColor)
+            }
+    }
+
+    private var baseBackgroundColor: Color {
+        Color(nsColor: .controlBackgroundColor)
+    }
+
+    private var highlightOverlayColor: Color {
         if isGraphSelected {
-            return AnyShapeStyle(Color.accentColor.opacity(0.22))
+            return Color.accentColor.opacity(0.22)
         }
         if isFocused {
-            return AnyShapeStyle(Color.accentColor.opacity(0.16))
+            return Color.accentColor.opacity(0.16)
         }
         if isPathNode {
-            return AnyShapeStyle(Color.accentColor.opacity(0.08))
+            return Color.accentColor.opacity(0.08)
         }
         if node.isExternal {
-            return AnyShapeStyle(Color.orange.opacity(0.12))
+            return Color.orange.opacity(0.12)
         }
-        return AnyShapeStyle(Color(nsColor: .controlBackgroundColor))
+        return .clear
     }
 
     private var borderColor: Color {
@@ -497,7 +797,7 @@ private struct ExpandedEdgeRenderModel: Identifiable {
 }
 
 private struct ExpandedEdgeLayer {
-    let geometry: EdgeCurveGeometry
+    let geometry: EdgePathGeometry
     let color: Color
     let strokeStyle: StrokeStyle
     let arrowColor: Color
@@ -506,7 +806,7 @@ private struct ExpandedEdgeLayer {
 
 private struct GroupedEdgeRenderModel: Identifiable {
     let id: String
-    let geometry: EdgeCurveGeometry
+    let geometry: EdgePathGeometry
     let strokeColor: Color
     let arrowColor: Color
     let lineWidth: CGFloat
@@ -514,25 +814,81 @@ private struct GroupedEdgeRenderModel: Identifiable {
 }
 
 private struct EdgeShape: Shape {
-    let geometry: EdgeCurveGeometry
+    let geometry: EdgePathGeometry
 
     init(from: CGRect, to: CGRect) {
-        geometry = EdgeCurveGeometry(from: from, to: to)
+        geometry = .curve(EdgeCurveGeometry(from: from, to: to))
     }
 
-    init(geometry: EdgeCurveGeometry) {
+    init(geometry: EdgePathGeometry) {
         self.geometry = geometry
     }
 
     func path(in _: CGRect) -> Path {
-        var path = Path()
-        path.move(to: geometry.start)
-        path.addCurve(
-            to: geometry.end,
-            control1: geometry.control1,
-            control2: geometry.control2
-        )
-        return path
+        geometry.path()
+    }
+}
+
+private enum EdgePathGeometry {
+    case curve(EdgeCurveGeometry)
+    case routed(EdgeRoutedGeometry)
+
+    var arrowAngle: CGFloat {
+        switch self {
+        case let .curve(geometry):
+            geometry.arrowAngle
+        case let .routed(geometry):
+            geometry.arrowAngle
+        }
+    }
+
+    func trimmedEnd(by distance: CGFloat) -> EdgePathGeometry {
+        switch self {
+        case let .curve(geometry):
+            .curve(geometry.trimmedEnd(by: distance))
+        case let .routed(geometry):
+            .routed(geometry.trimmedEnd(by: distance))
+        }
+    }
+
+    func arrowTip(inset: CGFloat = 4) -> CGPoint {
+        switch self {
+        case let .curve(geometry):
+            geometry.arrowTip(inset: inset)
+        case let .routed(geometry):
+            geometry.arrowTip(inset: inset)
+        }
+    }
+
+    func path() -> Path {
+        switch self {
+        case let .curve(geometry):
+            var path = Path()
+            path.move(to: geometry.start)
+            path.addCurve(
+                to: geometry.end,
+                control1: geometry.control1,
+                control2: geometry.control2
+            )
+            return path
+        case let .routed(geometry):
+            return geometry.path()
+        }
+    }
+
+    func intersects(_ rect: CGRect) -> Bool {
+        sampledPoints().adjacentPairs().contains { start, end in
+            segmentIntersectsRect(start: start, end: end, rect: rect)
+        }
+    }
+
+    private func sampledPoints() -> [CGPoint] {
+        switch self {
+        case let .curve(geometry):
+            geometry.sampledPoints(steps: 24)
+        case let .routed(geometry):
+            geometry.sampledPoints()
+        }
     }
 }
 
@@ -557,14 +913,28 @@ private struct EdgeCurveGeometry {
     }
 
     init(start: CGPoint, end: CGPoint) {
-        let direction: CGFloat = end.x >= start.x ? 1 : -1
-        let deltaX = max(abs(end.x - start.x) * 0.45, 36)
-        self.init(
-            start: start,
-            end: end,
-            control1: CGPoint(x: start.x + direction * deltaX, y: start.y),
-            control2: CGPoint(x: end.x - direction * deltaX, y: end.y)
-        )
+        let deltaX = end.x - start.x
+        let deltaY = end.y - start.y
+
+        if abs(deltaX) < abs(deltaY) * 0.7 {
+            let direction: CGFloat = deltaY >= 0 ? 1 : -1
+            let verticalDelta = max(abs(deltaY) * 0.4, 30)
+            self.init(
+                start: start,
+                end: end,
+                control1: CGPoint(x: start.x, y: start.y + direction * verticalDelta),
+                control2: CGPoint(x: end.x, y: end.y - direction * verticalDelta)
+            )
+        } else {
+            let direction: CGFloat = deltaX >= 0 ? 1 : -1
+            let horizontalDelta = max(abs(deltaX) * 0.45, 36)
+            self.init(
+                start: start,
+                end: end,
+                control1: CGPoint(x: start.x + direction * horizontalDelta, y: start.y),
+                control2: CGPoint(x: end.x - direction * horizontalDelta, y: end.y)
+            )
+        }
     }
 
     var arrowAngle: CGFloat {
@@ -587,6 +957,196 @@ private struct EdgeCurveGeometry {
             x: point.x - cos(arrowAngle) * distance,
             y: point.y - sin(arrowAngle) * distance
         )
+    }
+
+    func sampledPoints(steps: Int) -> [CGPoint] {
+        guard steps > 1 else { return [start, end] }
+        return (0...steps).map { step in
+            let t = CGFloat(step) / CGFloat(steps)
+            let oneMinusT = 1 - t
+            let x =
+                oneMinusT * oneMinusT * oneMinusT * start.x +
+                3 * oneMinusT * oneMinusT * t * control1.x +
+                3 * oneMinusT * t * t * control2.x +
+                t * t * t * end.x
+            let y =
+                oneMinusT * oneMinusT * oneMinusT * start.y +
+                3 * oneMinusT * oneMinusT * t * control1.y +
+                3 * oneMinusT * t * t * control2.y +
+                t * t * t * end.y
+            return CGPoint(x: x, y: y)
+        }
+    }
+}
+
+private struct EdgeRoutedGeometry {
+    let points: [CGPoint]
+
+    var arrowAngle: CGFloat {
+        guard points.count >= 2 else { return 0 }
+        let from = points[points.count - 2]
+        let to = points[points.count - 1]
+        return atan2(to.y - from.y, to.x - from.x)
+    }
+
+    func trimmedEnd(by distance: CGFloat) -> EdgeRoutedGeometry {
+        guard points.count >= 2 else { return self }
+        var adjustedPoints = points
+        let lastIndex = adjustedPoints.count - 1
+        let previous = adjustedPoints[lastIndex - 1]
+        let end = adjustedPoints[lastIndex]
+        let segmentLength = hypot(end.x - previous.x, end.y - previous.y)
+        guard segmentLength > .ulpOfOne else { return self }
+
+        let clampedDistance = min(max(0, distance), max(0, segmentLength - 1))
+        let ratio = (segmentLength - clampedDistance) / segmentLength
+        adjustedPoints[lastIndex] = CGPoint(
+            x: previous.x + (end.x - previous.x) * ratio,
+            y: previous.y + (end.y - previous.y) * ratio
+        )
+        return EdgeRoutedGeometry(points: adjustedPoints)
+    }
+
+    func arrowTip(inset: CGFloat = 4) -> CGPoint {
+        guard points.count >= 2 else { return points.last ?? .zero }
+        let previous = points[points.count - 2]
+        let end = points[points.count - 1]
+        let segmentLength = hypot(end.x - previous.x, end.y - previous.y)
+        guard segmentLength > .ulpOfOne else { return end }
+
+        let clampedInset = min(max(0, inset), max(0, segmentLength - 1))
+        let ratio = (segmentLength - clampedInset) / segmentLength
+        return CGPoint(
+            x: previous.x + (end.x - previous.x) * ratio,
+            y: previous.y + (end.y - previous.y) * ratio
+        )
+    }
+
+    func path() -> Path {
+        guard let first = points.first else { return Path() }
+        guard points.count >= 2 else {
+            var path = Path()
+            path.move(to: first)
+            return path
+        }
+
+        var path = Path()
+        path.move(to: first)
+
+        if points.count == 2 {
+            path.addLine(to: points[1])
+            return path
+        }
+
+        let cornerRadius: CGFloat = 16
+        var currentPoint = first
+
+        for index in 1..<(points.count - 1) {
+            let previous = points[index - 1]
+            let current = points[index]
+            let next = points[index + 1]
+
+            let incomingLength = hypot(current.x - previous.x, current.y - previous.y)
+            let outgoingLength = hypot(next.x - current.x, next.y - current.y)
+            guard incomingLength > .ulpOfOne, outgoingLength > .ulpOfOne else { continue }
+
+            let radius = min(cornerRadius, incomingLength / 2, outgoingLength / 2)
+            let incomingDirection = CGPoint(
+                x: (current.x - previous.x) / incomingLength,
+                y: (current.y - previous.y) / incomingLength
+            )
+            let outgoingDirection = CGPoint(
+                x: (next.x - current.x) / outgoingLength,
+                y: (next.y - current.y) / outgoingLength
+            )
+
+            let cornerStart = CGPoint(
+                x: current.x - incomingDirection.x * radius,
+                y: current.y - incomingDirection.y * radius
+            )
+            let cornerEnd = CGPoint(
+                x: current.x + outgoingDirection.x * radius,
+                y: current.y + outgoingDirection.y * radius
+            )
+
+            if currentPoint != cornerStart {
+                path.addLine(to: cornerStart)
+            }
+            path.addQuadCurve(to: cornerEnd, control: current)
+            currentPoint = cornerEnd
+        }
+
+        if let last = points.last, currentPoint != last {
+            path.addLine(to: last)
+        }
+
+        return path
+    }
+
+    func sampledPoints() -> [CGPoint] {
+        points
+    }
+}
+
+private func segmentIntersectsRect(start: CGPoint, end: CGPoint, rect: CGRect) -> Bool {
+    if rect.contains(start) || rect.contains(end) {
+        return true
+    }
+
+    let corners = [
+        CGPoint(x: rect.minX, y: rect.minY),
+        CGPoint(x: rect.maxX, y: rect.minY),
+        CGPoint(x: rect.maxX, y: rect.maxY),
+        CGPoint(x: rect.minX, y: rect.maxY)
+    ]
+
+    for (edgeStart, edgeEnd) in corners.adjacentPairs(closingLoop: true) {
+        if segmentsIntersect(start, end, edgeStart, edgeEnd) {
+            return true
+        }
+    }
+
+    return false
+}
+
+private func segmentsIntersect(_ p1: CGPoint, _ p2: CGPoint, _ q1: CGPoint, _ q2: CGPoint) -> Bool {
+    let o1 = orientation(p1, p2, q1)
+    let o2 = orientation(p1, p2, q2)
+    let o3 = orientation(q1, q2, p1)
+    let o4 = orientation(q1, q2, p2)
+
+    if o1 != o2 && o3 != o4 {
+        return true
+    }
+
+    if o1 == 0 && onSegment(p1, q1, p2) { return true }
+    if o2 == 0 && onSegment(p1, q2, p2) { return true }
+    if o3 == 0 && onSegment(q1, p1, q2) { return true }
+    if o4 == 0 && onSegment(q1, p2, q2) { return true }
+    return false
+}
+
+private func orientation(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> Int {
+    let value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y)
+    if abs(value) < 0.0001 { return 0 }
+    return value > 0 ? 1 : 2
+}
+
+private func onSegment(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> Bool {
+    b.x <= max(a.x, c.x) + 0.0001 &&
+    b.x >= min(a.x, c.x) - 0.0001 &&
+    b.y <= max(a.y, c.y) + 0.0001 &&
+    b.y >= min(a.y, c.y) - 0.0001
+}
+
+private extension Array where Element == CGPoint {
+    func adjacentPairs(closingLoop: Bool = false) -> [(CGPoint, CGPoint)] {
+        guard count >= 2 else { return [] }
+        var pairs: [(CGPoint, CGPoint)] = zip(self, dropFirst()).map { ($0, $1) }
+        if closingLoop, let first, let last {
+            pairs.append((last, first))
+        }
+        return pairs
     }
 }
 
@@ -668,7 +1228,7 @@ private struct LevelGroupCard: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(14)
-            .background(background)
+            .background(cardBackground)
             .overlay(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .strokeBorder(borderColor, lineWidth: isSelected ? 2 : 1)
@@ -678,11 +1238,13 @@ private struct LevelGroupCard: View {
         .buttonStyle(.plain)
     }
 
-    private var background: some ShapeStyle {
-        if isSelected {
-            return AnyShapeStyle(Color.accentColor.opacity(0.16))
-        }
-        return AnyShapeStyle(Color(nsColor: .controlBackgroundColor))
+    private var cardBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        return shape
+            .fill(Color(nsColor: .controlBackgroundColor))
+            .overlay {
+                shape.fill(isSelected ? Color.accentColor.opacity(0.16) : .clear)
+            }
     }
 
     private var borderColor: Color {
