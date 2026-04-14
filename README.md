@@ -22,14 +22,20 @@ Most questions about a large dependency graph are not "show me everything."
 - Open a Tuist project directly from the app and run `tuist graph --format json`
 - Load exported graph JSON files
 - Focus one module and filter by direction and depth
+- Auto-classify project layers from `metadata.tags`, project path, target name, and product hints
+- Persist per-project layer decisions in `.tuist-spider/layers.json`
+- Edit the applied layer for internal targets from the inspector without touching Tuist manifests
+- See read-only `metadata.tags`, applied layer, suggested layer, and classification source together
 - Toggle third-party dependencies on or off
 - Switch between:
   - `Expanded`: one card per module
   - `Grouped`: one card per level
+- Show clear layer bands in `Expanded` mode so modules stay grouped by project layer
 - Click a node in the graph without changing the left-side focus
 - Discover multiple visible connection paths between the focused node and the clicked node
 - Toggle paths individually and color them separately
 - Turn on `선택 경로만 보기` to hide everything except the currently active paths
+- Route edges around obstacles and reduce overlapping trunks when multiple paths pass through nearby lanes
 - See dependency direction directly on the graph
 - Zoom and pan with native macOS controls
 
@@ -122,11 +128,40 @@ Build a release ZIP:
 
 - `펼침`
   - shows every module as its own node
+  - keeps modules inside visible layer bands
 - `계층`
   - groups same-level modules into one card
   - click a level card to inspect the modules inside it
 
-### 4. Trace paths between two modules
+### 4. Review and adjust project layers
+
+- TuistSpider first tries `metadata.tags` values like `layer:feature`
+- If no explicit layer tag exists, it falls back to project path, target name, and product inference
+- In `Expanded` mode, the canvas draws separate layer regions so modules from the same layer stay aligned
+- Select an internal target to see:
+  - `Applied Layer`
+  - `Suggested Layer`
+  - `Applied Source`
+  - `Suggested Source`
+  - read-only `metadata.tags`
+- Change the applied layer from the inspector
+- Add a custom layer name when the inferred or tagged result is not what you want
+- Use `Reset to Suggested` to go back to the current automatic classification
+
+### 5. Persist layer decisions
+
+- TuistSpider stores project-specific layer classifications in:
+
+```text
+<project-root>/.tuist-spider/layers.json
+```
+
+- The saved value is applied first when you reload the same project or graph
+- New targets are auto-classified and synced into the snapshot file
+- Deleted targets are pruned from the snapshot automatically
+- External dependencies are not persisted in the snapshot
+
+### 6. Trace paths between two modules
 
 - Keep the left-side focus as your source node
 - Click another node in the graph
@@ -147,6 +182,23 @@ Build a release ZIP:
 - `space + drag` to pan
 - `control + wheel` to zoom
 - `shift + click` on a path row to add or remove it from the current path-only selection
+
+## Layer Classification Rules
+
+TuistSpider uses this priority order when deciding a module's layer:
+
+1. Saved project snapshot in `.tuist-spider/layers.json`
+2. `metadata.tags` entries using `layer:<name>`
+3. Project path inference
+4. Target name inference
+5. Product or test-target inference
+6. `Unclassified`
+
+Notes:
+
+- `layer:<name>` is the only metadata tag syntax treated as a layer source
+- Other metadata tags stay visible as read-only tags in the inspector
+- If multiple `layer:` tags exist, the first one is used and a warning is shown
 
 ## External Dependency Detection
 
