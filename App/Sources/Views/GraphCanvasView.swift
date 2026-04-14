@@ -269,23 +269,27 @@ struct GraphCanvasView: View {
         let geometry = EdgeCurveGeometry(from: from, to: to)
         let baseColor = baseEdgeColor(for: edge, matchingPaths: matchingPaths)
         let baseStroke = baseEdgeStrokeStyle(for: edge)
+        let baseArrowSize = baseArrowSize(for: edge)
+        let baseArrowInset = arrowLineInset(for: baseArrowSize)
+        let baseLineGeometry = geometry.trimmedEnd(by: baseArrowInset)
 
         ZStack {
-            EdgeShape(geometry: geometry)
+            EdgeShape(geometry: baseLineGeometry)
                 .stroke(baseColor, style: baseStroke)
 
             EdgeArrowHead(
                 geometry: geometry,
                 color: baseArrowColor(for: edge, matchingPaths: matchingPaths),
-                size: baseArrowSize(for: edge),
-                lineWidth: max(1.8, baseStroke.lineWidth * 0.92)
+                size: baseArrowSize
             )
 
             ForEach(Array(matchingPaths.enumerated()), id: \.element.id) { index, path in
                 let color = GraphPathPalette.color(at: path.paletteIndex).opacity(0.98)
                 let strokeStyle = highlightedEdgeStrokeStyle(rank: index, total: matchingPaths.count)
+                let arrowSize = 11 + CGFloat(max(0, matchingPaths.count - index - 1))
+                let lineGeometry = geometry.trimmedEnd(by: arrowLineInset(for: arrowSize))
 
-                EdgeShape(geometry: geometry)
+                EdgeShape(geometry: lineGeometry)
                     .stroke(
                         color,
                         style: strokeStyle
@@ -294,8 +298,7 @@ struct GraphCanvasView: View {
                 EdgeArrowHead(
                     geometry: geometry,
                     color: color,
-                    size: 11 + CGFloat(max(0, matchingPaths.count - index - 1)),
-                    lineWidth: max(2, strokeStyle.lineWidth * 0.68)
+                    size: arrowSize
                 )
             }
         }
@@ -353,6 +356,10 @@ struct GraphCanvasView: View {
             return 8
         }
         return 10
+    }
+
+    private func arrowLineInset(for arrowSize: CGFloat) -> CGFloat {
+        max(7, arrowSize + 1.5)
     }
 }
 
@@ -461,14 +468,32 @@ private struct EdgeCurveGeometry {
         self.control2 = CGPoint(x: end.x - deltaX, y: end.y)
     }
 
+    init(start: CGPoint, end: CGPoint, control1: CGPoint, control2: CGPoint) {
+        self.start = start
+        self.end = end
+        self.control1 = control1
+        self.control2 = control2
+    }
+
     var arrowAngle: CGFloat {
         atan2(end.y - control2.y, end.x - control2.x)
     }
 
+    func trimmedEnd(by distance: CGFloat) -> EdgeCurveGeometry {
+        let clampedDistance = max(0, distance)
+        let end = pointByMovingBack(from: end, distance: clampedDistance)
+        let control2 = pointByMovingBack(from: control2, distance: clampedDistance * 0.88)
+        return EdgeCurveGeometry(start: start, end: end, control1: control1, control2: control2)
+    }
+
     func arrowTip(inset: CGFloat = 4) -> CGPoint {
+        pointByMovingBack(from: end, distance: inset)
+    }
+
+    private func pointByMovingBack(from point: CGPoint, distance: CGFloat) -> CGPoint {
         CGPoint(
-            x: end.x - cos(arrowAngle) * inset,
-            y: end.y - sin(arrowAngle) * inset
+            x: point.x - cos(arrowAngle) * distance,
+            y: point.y - sin(arrowAngle) * distance
         )
     }
 }
@@ -477,37 +502,57 @@ private struct EdgeArrowHead: View {
     let geometry: EdgeCurveGeometry
     let color: Color
     let size: CGFloat
-    let lineWidth: CGFloat
 
     var body: some View {
-        ArrowChevronShape(
+        ArrowHeadShape(
             tip: geometry.arrowTip(),
             angle: geometry.arrowAngle,
             size: size
         )
-        .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+        .fill(color)
+        .shadow(color: color.opacity(0.18), radius: 1.5, x: 0, y: 0)
     }
 }
 
-private struct ArrowChevronShape: Shape {
+private struct ArrowHeadShape: Shape {
     let tip: CGPoint
     let angle: CGFloat
     let size: CGFloat
 
     func path(in _: CGRect) -> Path {
-        let wingAngle = CGFloat.pi / 6
+        let length = size
+        let width = size * 0.88
+        let tailDepth = size * 0.22
+        let directionX = cos(angle)
+        let directionY = sin(angle)
+        let normalX = cos(angle + (.pi / 2))
+        let normalY = sin(angle + (.pi / 2))
+        let baseCenter = CGPoint(
+            x: tip.x - directionX * length,
+            y: tip.y - directionY * length
+        )
+        let tailCenter = CGPoint(
+            x: baseCenter.x - directionX * tailDepth,
+            y: baseCenter.y - directionY * tailDepth
+        )
         let left = CGPoint(
-            x: tip.x - cos(angle - wingAngle) * size,
-            y: tip.y - sin(angle - wingAngle) * size
+            x: baseCenter.x + normalX * (width / 2),
+            y: baseCenter.y + normalY * (width / 2)
         )
         let right = CGPoint(
-            x: tip.x - cos(angle + wingAngle) * size,
-            y: tip.y - sin(angle + wingAngle) * size
+            x: baseCenter.x - normalX * (width / 2),
+            y: baseCenter.y - normalY * (width / 2)
+        )
+        let tail = CGPoint(
+            x: tailCenter.x,
+            y: tailCenter.y
         )
         var path = Path()
         path.move(to: left)
         path.addLine(to: tip)
         path.addLine(to: right)
+        path.addQuadCurve(to: tail, control: CGPoint(x: baseCenter.x, y: baseCenter.y))
+        path.closeSubpath()
         return path
     }
 }
@@ -577,19 +622,22 @@ private struct LevelEdgeView: View {
 
     var body: some View {
         let geometry = EdgeCurveGeometry(from: from, to: to)
+        let strokeColor = isSelected ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.22)
+        let arrowColor = isSelected ? Color.accentColor.opacity(0.82) : Color.secondary.opacity(0.4)
+        let arrowSize: CGFloat = isSelected ? 10 : 8
+        let lineGeometry = geometry.trimmedEnd(by: max(7, arrowSize + 1.5))
 
         ZStack {
-            EdgeShape(geometry: geometry)
+            EdgeShape(geometry: lineGeometry)
                 .stroke(
-                    isSelected ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.22),
+                    strokeColor,
                     style: StrokeStyle(lineWidth: isSelected ? 3 : 2, lineCap: .round)
                 )
 
             EdgeArrowHead(
                 geometry: geometry,
-                color: isSelected ? Color.accentColor.opacity(0.82) : Color.secondary.opacity(0.32),
-                size: isSelected ? 10 : 8,
-                lineWidth: isSelected ? 2.4 : 1.8
+                color: arrowColor,
+                size: arrowSize
             )
 
             Text("\(edge.edgeCount)")
