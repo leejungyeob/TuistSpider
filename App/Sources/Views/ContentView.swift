@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var viewModel = TuistSpiderViewModel()
@@ -64,6 +65,11 @@ struct ContentView: View {
                 viewModel.reloadCurrentProject()
             }
             .disabled(viewModel.currentProjectURL == nil && viewModel.lastProjectPath == nil)
+
+            Button("PNG 저장") {
+                exportCurrentGraphAsPNG()
+            }
+            .disabled(!viewModel.canExportCurrentGraphAsPNG)
 
             Button("샘플") {
                 viewModel.loadSample()
@@ -292,6 +298,44 @@ struct ContentView: View {
 
             levelLayerSummarySection(levelGroup: levelGroup)
             levelNodesSection(levelGroup: levelGroup)
+        }
+    }
+
+    private func exportCurrentGraphAsPNG() {
+        guard viewModel.canExportCurrentGraphAsPNG else { return }
+
+        let panel = NSSavePanel()
+        panel.title = "그래프 PNG 저장"
+        panel.prompt = "저장"
+        panel.nameFieldStringValue = viewModel.suggestedPNGFileName
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        if let suggestedDirectoryURL = viewModel.suggestedPNGDirectoryURL {
+            panel.directoryURL = suggestedDirectoryURL
+        }
+
+        guard panel.runModal() == .OK, let fileURL = panel.url else { return }
+
+        let exportView = GraphPNGExportView(
+            subgraph: viewModel.displayedSubgraph,
+            presentationMode: viewModel.presentationMode,
+            focusedNodeID: viewModel.selectedNodeID,
+            graphSelectedNodeID: viewModel.visibleGraphSelectedNodeID,
+            selectedLevel: viewModel.selectedLevel,
+            connectionPaths: viewModel.activeConnectionPaths,
+            hasConnectionPathContext: viewModel.graphSelectedNode != nil && !viewModel.connectionPaths.isEmpty
+        )
+
+        do {
+            try GraphPNGExportService.exportPNG(
+                view: exportView,
+                size: exportView.exportSize,
+                to: fileURL
+            )
+            viewModel.handlePNGExportSuccess(fileURL: fileURL)
+        } catch {
+            viewModel.handlePNGExportFailure(error)
         }
     }
 
@@ -1021,5 +1065,42 @@ private struct LayerBadge: View {
 
     private var badgeColor: Color {
         LayerColorPalette.color(for: layerName)
+    }
+}
+
+private struct GraphPNGExportView: View {
+    let subgraph: SpiderGraphSubgraph
+    let presentationMode: GraphPresentationMode
+    let focusedNodeID: String?
+    let graphSelectedNodeID: String?
+    let selectedLevel: Int
+    let connectionPaths: [SpiderGraphConnectionPath]
+    let hasConnectionPathContext: Bool
+
+    var exportSize: CGSize {
+        let canvasSize = presentationMode == .grouped
+            ? subgraph.levelCanvasLayout.canvasSize
+            : subgraph.canvasLayout.canvasSize
+
+        return CGSize(width: canvasSize.width + 48, height: canvasSize.height + 48)
+    }
+
+    var body: some View {
+        GraphCanvasView(
+            subgraph: subgraph,
+            presentationMode: presentationMode,
+            focusedNodeID: focusedNodeID,
+            graphSelectedNodeID: graphSelectedNodeID,
+            selectedLevel: selectedLevel,
+            connectionPaths: connectionPaths,
+            hasConnectionPathContext: hasConnectionPathContext,
+            focusRequestID: 0,
+            showsZoomControls: false,
+            zoomScale: .constant(TuistSpiderViewModel.defaultZoomScale),
+            onSelect: { _ in },
+            onSelectLevel: { _ in }
+        )
+        .frame(width: exportSize.width, height: exportSize.height)
+        .background(Color(nsColor: .textBackgroundColor))
     }
 }

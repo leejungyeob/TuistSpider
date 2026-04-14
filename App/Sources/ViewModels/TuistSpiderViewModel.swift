@@ -281,6 +281,32 @@ final class TuistSpiderViewModel: ObservableObject {
         currentProjectURL?.path ?? currentJSONURL?.path ?? graph.rootPath ?? "샘플 그래프"
     }
 
+    var canExportCurrentGraphAsPNG: Bool {
+        !displayedSubgraph.nodes.isEmpty
+    }
+
+    var suggestedPNGDirectoryURL: URL? {
+        if let currentProjectURL {
+            return currentProjectURL
+        }
+        if let currentJSONURL {
+            return currentJSONURL.deletingLastPathComponent()
+        }
+        if let rootPath = graph.rootPath {
+            return URL(fileURLWithPath: rootPath, isDirectory: true)
+        }
+        return nil
+    }
+
+    var suggestedPNGFileName: String {
+        let baseName = sanitizeFileNameComponent(graph.graphName)
+        let modeName = presentationMode == .grouped ? "grouped" : "expanded"
+        if let selectedNode {
+            return "\(baseName)-\(modeName)-\(sanitizeFileNameComponent(selectedNode.name)).png"
+        }
+        return "\(baseName)-\(modeName).png"
+    }
+
     var zoomPercentageLabel: String {
         "\(Int((zoomScale * 100).rounded()))%"
     }
@@ -529,6 +555,15 @@ final class TuistSpiderViewModel: ObservableObject {
         applyLayerClassification(for: nodeID, layerName: node.suggestedLayer)
     }
 
+    func handlePNGExportSuccess(fileURL: URL) {
+        statusMessage = "PNG를 저장했습니다: \(fileURL.lastPathComponent)"
+    }
+
+    func handlePNGExportFailure(_ error: Error) {
+        presentedError = .processFailed("PNG 저장에 실패했습니다. \(error.localizedDescription)")
+        statusMessage = "PNG 저장에 실패했습니다."
+    }
+
     private func loadProject(at url: URL) {
         isLoading = true
         statusMessage = "Tuist 그래프를 생성하는 중입니다..."
@@ -718,6 +753,13 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private static func clampZoomScale(_ value: Double) -> Double {
         min(max(value, zoomScaleRange.lowerBound), zoomScaleRange.upperBound)
+    }
+
+    private func sanitizeFileNameComponent(_ value: String) -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "\\/:*?\"<>|")
+        let cleaned = value.components(separatedBy: invalidCharacters).joined(separator: "-")
+        let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "TuistSpider" : trimmed
     }
 
     private func loadStatusMessage(base: String, for graph: SpiderGraph) -> String {

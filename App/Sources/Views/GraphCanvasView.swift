@@ -27,6 +27,7 @@ struct GraphCanvasView: View {
     let connectionPaths: [SpiderGraphConnectionPath]
     let hasConnectionPathContext: Bool
     let focusRequestID: Int
+    var showsZoomControls = true
     @Binding var zoomScale: Double
 
     @GestureState private var gestureZoomScale: CGFloat = 1
@@ -193,8 +194,10 @@ struct GraphCanvasView: View {
                 .background(Color(nsColor: .textBackgroundColor))
                 .simultaneousGesture(magnificationGesture)
 
-                zoomControls
-                    .padding(16)
+                if showsZoomControls {
+                    zoomControls
+                        .padding(16)
+                }
             }
         }
     }
@@ -950,23 +953,7 @@ private struct LayerRegionBackground: View {
                             lineWidth: 1.6
                         )
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .inset(by: 3)
-                        .strokeBorder(
-                            regionColor.opacity(region.kind == .external ? 0.24 : 0.34),
-                            style: StrokeStyle(lineWidth: 1.1, dash: [10, 8])
-                        )
-                )
                 .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 10)
-
-            VStack(spacing: 0) {
-                regionDivider
-                Spacer()
-                regionDivider
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
 
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
@@ -1005,18 +992,6 @@ private struct LayerRegionBackground: View {
 
     private var headerBackground: Color {
         Color(nsColor: .windowBackgroundColor).opacity(0.92)
-    }
-
-    private var regionDivider: some View {
-        Rectangle()
-            .fill(boundaryColor)
-            .frame(height: 1.5)
-            .overlay(
-                Rectangle()
-                    .fill(regionColor.opacity(0.25))
-                    .frame(height: 0.5)
-                    .offset(y: 0.5)
-            )
     }
 }
 
