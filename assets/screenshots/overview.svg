@@ -1,0 +1,99 @@
+<svg width="1440" height="920" viewBox="0 0 1440 920" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1440" y2="920" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E1118"/>
+      <stop offset="1" stop-color="#121622"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="382" y1="391" x2="900" y2="391" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2F82FF"/>
+      <stop offset="1" stop-color="#74B3FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1440" height="920" rx="28" fill="url(#bg)"/>
+  <rect x="26" y="26" width="1388" height="868" rx="24" fill="#161A24"/>
+  <rect x="26" y="26" width="1388" height="68" rx="24" fill="#1B202C"/>
+  <circle cx="58" cy="60" r="7" fill="#FF8D89"/>
+  <circle cx="82" cy="60" r="7" fill="#FFC65A"/>
+  <circle cx="106" cy="60" r="7" fill="#37D58D"/>
+  <text x="136" y="68" fill="#F5F7FB" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="28" font-weight="700">TuistSpider</text>
+  <text x="1220" y="66" fill="#8E98AE" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="600">Sample graph / normalized-sample</text>
+
+  <rect x="44" y="112" width="286" height="764" rx="20" fill="#F3F5FA"/>
+  <text x="72" y="154" fill="#202636" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="22" font-weight="700">Filters</text>
+  <rect x="72" y="182" width="230" height="42" rx="14" fill="#FFFFFF"/>
+  <text x="92" y="209" fill="#8C93A7" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="500">Search modules</text>
+  <rect x="72" y="244" width="230" height="60" rx="18" fill="#FFFFFF"/>
+  <text x="92" y="270" fill="#333A4B" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="14" font-weight="700">Direction</text>
+  <text x="92" y="291" fill="#687087" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="13" font-weight="500">Both</text>
+  <rect x="72" y="320" width="230" height="60" rx="18" fill="#FFFFFF"/>
+  <text x="92" y="346" fill="#333A4B" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="14" font-weight="700">Depth</text>
+  <text x="92" y="367" fill="#687087" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="13" font-weight="500">All</text>
+  <rect x="72" y="398" width="230" height="56" rx="18" fill="#FFFFFF"/>
+  <text x="92" y="432" fill="#333A4B" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="14" font-weight="700">Expanded</text>
+
+  <rect x="72" y="492" width="230" height="330" rx="22" fill="#E8EBF3"/>
+  <rect x="88" y="516" width="198" height="58" rx="18" fill="#E7F0FF" stroke="#2F82FF" stroke-width="2"/>
+  <text x="106" y="547" fill="#1A243A" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="16" font-weight="700">HomeFeature</text>
+  <rect x="88" y="590" width="198" height="50" rx="16" fill="#FFFFFF"/>
+  <text x="106" y="621" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">PippoFriendsInterface</text>
+  <rect x="88" y="654" width="198" height="50" rx="16" fill="#FFFFFF"/>
+  <text x="106" y="685" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">PlatformSupport</text>
+  <rect x="88" y="718" width="198" height="50" rx="16" fill="#FFFFFF"/>
+  <text x="106" y="749" fill="#394154" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="15" font-weight="600">PlaygroundInterface</text>
+
+  <rect x="350" y="112" width="724" height="764" rx="20" fill="#121620"/>
+  <text x="380" y="154" fill="#F6F8FC" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="28" font-weight="700">Focused Graph</text>
+  <text x="380" y="182" fill="#8E98AE" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="500">HomeFeature</text>
+
+  <rect x="394" y="376" width="176" height="74" rx="22" fill="#1F2B43" stroke="#2F82FF" stroke-width="3"/>
+  <text x="422" y="407" fill="#F4F8FF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="20" font-weight="700">HomeFeature</text>
+  <text x="422" y="430" fill="#8AA6D3" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="13" font-weight="500">HomeFeature / staticFramework</text>
+
+  <rect x="648" y="206" width="224" height="72" rx="20" fill="#191F2B"/>
+  <text x="678" y="238" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">PippoFriendsInterface</text>
+  <rect x="652" y="332" width="220" height="72" rx="20" fill="#191F2B"/>
+  <text x="682" y="364" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">Networking</text>
+  <rect x="652" y="456" width="220" height="72" rx="20" fill="#191F2B"/>
+  <text x="682" y="488" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">PlatformSupport</text>
+  <rect x="658" y="584" width="214" height="72" rx="20" fill="#191F2B"/>
+  <text x="688" y="616" fill="#F3F7FE" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="18" font-weight="700">OverlaySupport</text>
+
+  <rect x="928" y="270" width="116" height="300" rx="20" fill="#151A24"/>
+  <rect x="952" y="316" width="70" height="42" rx="14" fill="#202634"/>
+  <rect x="952" y="384" width="70" height="42" rx="14" fill="#202634"/>
+  <rect x="952" y="452" width="70" height="42" rx="14" fill="#202634"/>
+
+  <path d="M570 413C618 413 612 242 648 242" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
+  <path d="M570 413C618 413 624 368 652 368" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
+  <path d="M570 413C618 413 624 492 652 492" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
+  <path d="M570 413C618 413 628 620 658 620" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
+
+  <path d="M872 242C918 242 920 337 952 337" stroke="#455066" stroke-width="3" stroke-linecap="round"/>
+  <path d="M872 368C918 368 920 405 952 405" stroke="#455066" stroke-width="3" stroke-linecap="round"/>
+  <path d="M872 492C920 492 920 473 952 473" stroke="#455066" stroke-width="3" stroke-linecap="round"/>
+
+  <rect x="1094" y="112" width="302" height="764" rx="20" fill="#F3F5FA"/>
+  <text x="1124" y="154" fill="#202636" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="22" font-weight="700">Inspector</text>
+  <text x="1124" y="196" fill="#202636" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="26" font-weight="700">HomeFeature</text>
+  <text x="1124" y="224" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="600">STATICFRAMEWORK</text>
+
+  <rect x="1124" y="254" width="114" height="82" rx="18" fill="#FFFFFF"/>
+  <text x="1144" y="288" fill="#2C3344" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="14" font-weight="700">Direct deps</text>
+  <text x="1166" y="318" fill="#171B25" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="24" font-weight="800">7</text>
+
+  <rect x="1250" y="254" width="114" height="82" rx="18" fill="#FFFFFF"/>
+  <text x="1268" y="288" fill="#2C3344" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="14" font-weight="700">Dependents</text>
+  <text x="1294" y="318" fill="#171B25" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="24" font-weight="800">14</text>
+
+  <rect x="1124" y="362" width="240" height="92" rx="18" fill="#FFFFFF"/>
+  <text x="1144" y="394" fill="#2B3243" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="16" font-weight="700">Direct dependencies</text>
+  <text x="1144" y="421" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">PippoFriendsInterface</text>
+  <text x="1144" y="443" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Networking</text>
+
+  <rect x="1124" y="476" width="240" height="122" rx="18" fill="#FFFFFF"/>
+  <text x="1144" y="508" fill="#2B3243" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="16" font-weight="700">Metadata</text>
+  <text x="1144" y="535" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Project  HomeFeature</text>
+  <text x="1144" y="559" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Sources  12</text>
+  <text x="1144" y="583" fill="#6E768B" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="14" font-weight="500">Resources  3</text>
+</svg>

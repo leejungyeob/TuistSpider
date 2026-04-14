@@ -1,5 +1,7 @@
 # TuistSpider
 
+![TuistSpider banner](./assets/branding/hero-banner.svg)
+
 Inspect only the part of a Tuist dependency graph you actually care about.
 
 `TuistSpider` is a native macOS app for exploring large Tuist module graphs without drowning in the full image export. Pick one module, narrow by direction and depth, group by level when needed, and inspect only the connected paths you want to see.
@@ -126,6 +128,16 @@ Build a distributable app zip:
 ```bash
 ./scripts/mac/build-release-zip.sh
 ```
+
+## Screenshots
+
+### Focused graph exploration
+
+![TuistSpider overview](./assets/screenshots/overview.svg)
+
+### Multi-path connection tracing
+
+![TuistSpider multi-paths](./assets/screenshots/multi-paths.svg)
 
 ## Usage
 
