@@ -743,7 +743,7 @@ struct SpiderGraphSubgraph: Sendable {
 
         var sourceOffsets: [String: CGFloat] = [:]
         var targetOffsets: [String: CGFloat] = [:]
-        let nodeMixedFlowRoles = makeNodeMixedFlowRoles(inputs: inputs)
+        let mixedFlowPortKeys = makeMixedFlowPortKeys(inputs: inputs)
 
         let sourceGroups = Dictionary(grouping: inputs) { input in
             SpiderGraphEdgePortKey(nodeID: input.edge.from, side: input.sourceSide)
@@ -772,7 +772,9 @@ struct SpiderGraphSubgraph: Sendable {
                     frame: input.fromFrame,
                     side: input.sourceSide,
                     role: .outgoing,
-                    separateFlows: nodeMixedFlowRoles.contains(input.edge.from)
+                    separateFlows: mixedFlowPortKeys.contains(
+                        SpiderGraphEdgePortKey(nodeID: input.edge.from, side: input.sourceSide)
+                    )
                 )
             }
         }
@@ -797,7 +799,9 @@ struct SpiderGraphSubgraph: Sendable {
                     frame: input.toFrame,
                     side: input.targetSide,
                     role: .incoming,
-                    separateFlows: nodeMixedFlowRoles.contains(input.edge.to)
+                    separateFlows: mixedFlowPortKeys.contains(
+                        SpiderGraphEdgePortKey(nodeID: input.edge.to, side: input.targetSide)
+                    )
                 )
             }
         }
@@ -841,16 +845,22 @@ struct SpiderGraphSubgraph: Sendable {
         return (isSameColumn || hasMeaningfulOverlap) && isStacked
     }
 
-    private static func makeNodeMixedFlowRoles(inputs: [EdgeLayoutInput]) -> Set<String> {
-        var rolesByNode: [String: Set<SpiderGraphEdgePortRole>] = [:]
+    private static func makeMixedFlowPortKeys(inputs: [EdgeLayoutInput]) -> Set<SpiderGraphEdgePortKey> {
+        var rolesByPortKey: [SpiderGraphEdgePortKey: Set<SpiderGraphEdgePortRole>] = [:]
         for input in inputs {
-            rolesByNode[input.edge.from, default: []].insert(.outgoing)
-            rolesByNode[input.edge.to, default: []].insert(.incoming)
+            rolesByPortKey[
+                SpiderGraphEdgePortKey(nodeID: input.edge.from, side: input.sourceSide),
+                default: []
+            ].insert(.outgoing)
+            rolesByPortKey[
+                SpiderGraphEdgePortKey(nodeID: input.edge.to, side: input.targetSide),
+                default: []
+            ].insert(.incoming)
         }
 
         return Set(
-            rolesByNode.compactMap { nodeID, roles in
-                roles.count > 1 ? nodeID : nil
+            rolesByPortKey.compactMap { portKey, roles in
+                roles.count > 1 ? portKey : nil
             }
         )
     }

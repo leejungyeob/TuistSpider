@@ -543,6 +543,10 @@ struct GraphCanvasView: View {
     }
 
     private func preferredExpandedDirectGeometry(for endpoints: SpiderGraphEdgeEndpoints) -> EdgePathGeometry {
+        if shouldUseStraightExpandedGeometry(for: endpoints) {
+            return .routed(EdgeRoutedGeometry(points: [endpoints.start, endpoints.end]))
+        }
+
         if endpoints.sourceSide.isHorizontal && endpoints.targetSide.isHorizontal {
             let leadDistance: CGFloat = max(min(abs(endpoints.end.x - endpoints.start.x) * 0.18, 34), 18)
             let startLead = offsetPoint(endpoints.start, toward: endpoints.sourceSide, distance: leadDistance)
@@ -582,6 +586,33 @@ struct GraphCanvasView: View {
         }
 
         return .routed(EdgeRoutedGeometry(points: points))
+    }
+
+    private func shouldUseStraightExpandedGeometry(for endpoints: SpiderGraphEdgeEndpoints) -> Bool {
+        guard endpoints.sourceSide.isHorizontal == endpoints.targetSide.isHorizontal else {
+            return false
+        }
+        guard areOpposingSides(endpoints.sourceSide, endpoints.targetSide) else {
+            return false
+        }
+
+        let deltaX = abs(endpoints.end.x - endpoints.start.x)
+        let deltaY = abs(endpoints.end.y - endpoints.start.y)
+
+        if endpoints.sourceSide.isHorizontal {
+            return deltaX >= 56 && deltaY <= 18
+        }
+
+        return deltaY >= 56 && deltaX <= 18
+    }
+
+    private func areOpposingSides(_ lhs: SpiderGraphAnchorSide, _ rhs: SpiderGraphAnchorSide) -> Bool {
+        switch (lhs, rhs) {
+        case (.left, .right), (.right, .left), (.top, .bottom), (.bottom, .top):
+            return true
+        default:
+            return false
+        }
     }
 
     private func expandedObstacleFrames(
