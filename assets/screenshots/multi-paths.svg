@@ -54,23 +54,25 @@
   <path d="M570 387C616 387 622 248 664 248" stroke="#50607A" stroke-opacity="0.25" stroke-width="8" stroke-linecap="round"/>
   <path d="M570 387C616 387 628 414 668 414" stroke="#50607A" stroke-opacity="0.25" stroke-width="8" stroke-linecap="round"/>
   <path d="M570 387C616 387 628 580 668 580" stroke="#50607A" stroke-opacity="0.25" stroke-width="8" stroke-linecap="round"/>
-  <path d="M874 248C918 248 910 391 926 391" stroke="#50607A" stroke-opacity="0.25" stroke-width="8" stroke-linecap="round"/>
+  <path d="M874 248C918 248 910 376 926 376" stroke="#50607A" stroke-opacity="0.25" stroke-width="8" stroke-linecap="round"/>
   <path d="M882 414C904 414 908 391 926 391" stroke="#50607A" stroke-opacity="0.25" stroke-width="8" stroke-linecap="round"/>
-  <path d="M882 580C904 580 916 391 926 391" stroke="#50607A" stroke-opacity="0.25" stroke-width="8" stroke-linecap="round"/>
+  <path d="M882 580C904 580 916 406 926 406" stroke="#50607A" stroke-opacity="0.25" stroke-width="8" stroke-linecap="round"/>
 
   <path d="M570 387C616 387 622 248 664 248" stroke="url(#blue)" stroke-width="5" stroke-linecap="round"/>
-  <path d="M874 248C918 248 910 391 926 391" stroke="url(#blue)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M874 248C918 248 910 376 926 376" stroke="url(#blue)" stroke-width="5" stroke-linecap="round"/>
 
   <path d="M570 387C616 387 628 414 668 414" stroke="url(#mint)" stroke-width="5" stroke-linecap="round"/>
   <path d="M882 414C904 414 908 391 926 391" stroke="url(#mint)" stroke-width="5" stroke-linecap="round"/>
 
   <path d="M570 387C616 387 628 580 668 580" stroke="url(#amber)" stroke-width="5" stroke-linecap="round"/>
-  <path d="M882 580C904 580 916 391 926 391" stroke="url(#amber)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M882 580C904 580 916 406 926 406" stroke="url(#amber)" stroke-width="5" stroke-linecap="round"/>
 
-  <circle cx="664" cy="248" r="6" fill="#60ABFF"/>
-  <circle cx="668" cy="414" r="6" fill="#43E7BE"/>
-  <circle cx="668" cy="580" r="6" fill="#FFC770"/>
-  <circle cx="926" cy="391" r="7" fill="#D0DDFF"/>
+  <path d="M664 248L652 241L652 255Z" fill="#60ABFF"/>
+  <path d="M668 414L656 407L656 421Z" fill="#43E7BE"/>
+  <path d="M668 580L656 573L656 587Z" fill="#FFC770"/>
+  <path d="M926 376L915 370L915 382Z" fill="#60ABFF"/>
+  <path d="M926 391L915 385L915 397Z" fill="#43E7BE"/>
+  <path d="M926 406L915 400L915 412Z" fill="#FFC770"/>
 
   <rect x="1094" y="112" width="302" height="764" rx="20" fill="#F3F5FA"/>
   <text x="1124" y="154" fill="#202636" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="22" font-weight="700">Paths</text>

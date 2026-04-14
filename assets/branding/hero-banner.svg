@@ -67,6 +67,9 @@
     <path d="M18 18L35 16" stroke="#7FAEFF" stroke-width="2.4"/>
     <path d="M18 18L28 34" stroke="#7FAEFF" stroke-width="2.4"/>
     <path d="M35 16L28 34" stroke="#9FF0D7" stroke-width="2.4"/>
+    <path d="M35 16L29 14L30 19Z" fill="#7FAEFF"/>
+    <path d="M28 34L24 28L21 32Z" fill="#7FAEFF"/>
+    <path d="M28 34L29 28L24 29Z" fill="#9FF0D7"/>
   </g>
   <text x="166" y="582" fill="#141821" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="34" font-weight="700">TuistSpider</text>
   <text x="168" y="614" fill="#5D6477" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="18" font-weight="500">Expanded  •  Grouped  •  Multi-path</text>
@@ -111,9 +114,8 @@
     <path d="M863 272C888 272 894 261 922 261" stroke="url(#lineBlue)" stroke-width="6" stroke-linecap="round"/>
     <path d="M863 272C894 272 894 367 932 367" stroke="url(#lineMint)" stroke-width="6" stroke-linecap="round"/>
     <path d="M863 272C912 272 932 470 972 470" stroke="url(#lineAmber)" stroke-width="6" stroke-linecap="round"/>
-
-    <circle cx="922" cy="261" r="6" fill="#56A6FF"/>
-    <circle cx="932" cy="367" r="6" fill="#54E7BE"/>
-    <circle cx="972" cy="470" r="6" fill="#FFC46B"/>
+    <path d="M922 261L910 254L910 268Z" fill="#56A6FF"/>
+    <path d="M932 367L920 360L920 374Z" fill="#54E7BE"/>
+    <path d="M972 470L960 463L960 477Z" fill="#FFC46B"/>
   </g>
 </svg>

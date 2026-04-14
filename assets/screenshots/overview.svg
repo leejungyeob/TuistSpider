@@ -68,10 +68,17 @@
   <path d="M570 413C618 413 624 368 652 368" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
   <path d="M570 413C618 413 624 492 652 492" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
   <path d="M570 413C618 413 628 620 658 620" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
+  <path d="M648 242L636 235L636 249Z" fill="#67B0FF"/>
+  <path d="M652 368L640 361L640 375Z" fill="#67B0FF"/>
+  <path d="M652 492L640 485L640 499Z" fill="#67B0FF"/>
+  <path d="M658 620L646 613L646 627Z" fill="#67B0FF"/>
 
   <path d="M872 242C918 242 920 337 952 337" stroke="#455066" stroke-width="3" stroke-linecap="round"/>
   <path d="M872 368C918 368 920 405 952 405" stroke="#455066" stroke-width="3" stroke-linecap="round"/>
   <path d="M872 492C920 492 920 473 952 473" stroke="#455066" stroke-width="3" stroke-linecap="round"/>
+  <path d="M952 337L943 332L943 342Z" fill="#59657D"/>
+  <path d="M952 405L943 400L943 410Z" fill="#59657D"/>
+  <path d="M952 473L943 468L943 478Z" fill="#59657D"/>
 
   <rect x="1094" y="112" width="302" height="764" rx="20" fill="#F3F5FA"/>
   <text x="1124" y="154" fill="#202636" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="22" font-weight="700">Inspector</text>
