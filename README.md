@@ -33,13 +33,7 @@ Most of the time, the real questions are simpler:
 
 ## Download
 
-If you only want to use the app, the cleanest distribution method is:
-
-1. Open the repository's `Releases` page
-2. Download `TuistSpider.app.zip`
-3. Unzip it
-4. Move `TuistSpider.app` into `Applications`
-5. If macOS warns because the app is unsigned, right-click the app and choose `Open`
+If you only want to use the app, download the release build instead of cloning the repo.
 
 Repository:
 
@@ -48,6 +42,27 @@ Repository:
 Releases:
 
 - [github.com/leejungyeob/TuistSpider/releases](https://github.com/leejungyeob/TuistSpider/releases)
+
+### How To Download The Released App
+
+1. Open the [Releases page](https://github.com/leejungyeob/TuistSpider/releases)
+2. Open the latest release
+3. Under `Assets`, download `TuistSpider.app.zip`
+4. Unzip the file
+5. Move `TuistSpider.app` into `Applications`
+6. Launch the app
+
+If macOS blocks the app because it is unsigned:
+
+1. Right-click `TuistSpider.app`
+2. Choose `Open`
+3. Click `Open` again in the warning dialog
+
+If you prefer Terminal, you can also remove quarantine manually:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/TuistSpider.app
+```
 
 ## App-Only Distribution
 
@@ -72,6 +87,25 @@ dist/TuistSpider.app.zip
 ```
 
 That single zip file is what users should download.
+
+### How To Publish A Release Asset
+
+If you are uploading the app yourself:
+
+1. Run:
+
+```bash
+./scripts/mac/build-release-zip.sh
+```
+
+2. Open [GitHub Releases](https://github.com/leejungyeob/TuistSpider/releases)
+3. Click `Draft a new release`
+4. Create a tag such as `v0.1.0`
+5. Set a release title such as `TuistSpider v0.1.0`
+6. Upload `dist/TuistSpider.app.zip` to `Assets`
+7. Publish the release
+
+After that, users only need the Releases link.
 
 ## Quick Start
 
