@@ -1,154 +1,215 @@
 # TuistSpider
 
-Tuist가 만들어주는 전체 dependency graph는 모듈 수가 많아지면 읽기가 거의 불가능해집니다.  
-`TuistSpider`는 Tuist 프로젝트의 그래프를 가져와서, 내가 보고 싶은 모듈 주변만 빠르게 좁혀 보는 macOS 전용 로컬 앱입니다.
+Inspect only the part of a Tuist dependency graph you actually care about.
 
-## 문제의식
+`TuistSpider` is a native macOS app for exploring large Tuist module graphs without drowning in the full image export. Pick one module, narrow by direction and depth, group by level when needed, and inspect only the connected paths you want to see.
 
-- 전체 그래프 이미지는 모듈이 많아질수록 시각적으로 과밀해집니다.
-- 실제로는 "이 모듈이 무엇을 의존하는지", "누가 이 모듈을 참조하는지"만 빠르게 보고 싶은 경우가 많습니다.
-- 서드파티와 내부 모듈을 분리해서 봐야 할 때가 많습니다.
+## Why
 
-## 주요 기능
+Tuist's generated graph is useful, but once a project grows to dozens or hundreds of modules, the full graph image becomes hard to read.
 
-- Tuist 프로젝트 폴더를 직접 열어서 내부에서 `tuist graph --format json` 실행
-- 이미 export된 JSON 파일 직접 열기
-- 중심 모듈 선택 후 `양방향`, `의존하는 쪽`, `의존받는 쪽` 전환
-- depth 제한
-- 외부 의존성 포함 여부 토글
-- `펼쳐서 보기` / `계층 묶음 보기` 전환
-- 계층 묶음 보기에서 같은 level의 노드를 하나의 카드로 집계
-- 계층 카드 클릭 시 포함된 모듈 목록을 오른쪽 패널에 표시
-- 그래프 줌/팬 지원
+Most of the time, the real questions are simpler:
 
-## 지원 플랫폼
+- What does this module depend on?
+- Who depends on this module?
+- Which path connects module A to module B?
+- Which of those paths do I want to inspect right now?
 
-- macOS
-- SwiftUI 기반 네이티브 앱
+`TuistSpider` is built for that workflow.
 
-## 요구 사항
+## Highlights
 
-- Xcode
-- Tuist CLI
-- macOS에서 `tuist` 실행 가능 상태
+- Open a Tuist project directly and run `tuist graph --format json` from the app
+- Load exported graph JSON files
+- Filter around one focused module by direction and depth
+- Toggle third-party dependencies on or off
+- Switch between:
+  - `Expanded`: every module as its own card
+  - `Grouped`: same-level modules folded into one layer card
+- Click a graph node without changing the left-side focus
+- Show multiple connection paths from the focused module to the clicked node
+- Toggle individual paths on and off, each with its own color
+- Zoom and pan with native macOS interactions
 
-예시:
+## Download
+
+If you only want to use the app, the cleanest distribution method is:
+
+1. Open the repository's `Releases` page
+2. Download `TuistSpider.app.zip`
+3. Unzip it
+4. Move `TuistSpider.app` into `Applications`
+5. If macOS warns because the app is unsigned, right-click the app and choose `Open`
+
+Repository:
+
+- [github.com/leejungyeob/TuistSpider](https://github.com/leejungyeob/TuistSpider)
+
+Releases:
+
+- [github.com/leejungyeob/TuistSpider/releases](https://github.com/leejungyeob/TuistSpider/releases)
+
+## App-Only Distribution
+
+Yes. You do not need users to clone the repo or build from source.
+
+The recommended flow is:
+
+1. Build a release zip
+2. Upload that zip to GitHub Releases
+3. Share the Releases link
+
+Release build command:
 
 ```bash
-brew install tuist
+./scripts/mac/build-release-zip.sh
 ```
 
-## 빠른 시작
+This creates:
 
-### 앱 바로 실행
+```text
+dist/TuistSpider.app.zip
+```
+
+That single zip file is what users should download.
+
+## Quick Start
+
+Run the app locally:
 
 ```bash
 ./scripts/run_mac_app.sh
 ```
 
-이 스크립트가 아래를 처리합니다.
-
-- `tuist generate`
-- `xcodebuild`로 앱 빌드
-- `TuistSpider.app` 실행
-
-### Xcode로 열기
+Open the Xcode project instead:
 
 ```bash
 ./scripts/open_mac_app.sh
 ```
 
-## 앱 사용 방법
+Build a distributable app zip:
 
-### 1. 프로젝트 열기
+```bash
+./scripts/mac/build-release-zip.sh
+```
 
-- 앱 상단의 `프로젝트 열기` 클릭
-- Tuist 프로젝트 루트 폴더 선택
-- 앱이 내부에서 `tuist graph --format json`을 실행해 그래프를 로드
+## Usage
 
-### 2. JSON 열기
+### 1. Open a Tuist project
 
-- 이미 저장된 그래프 JSON이 있다면 `JSON 열기`로 직접 로드 가능
+- Click `프로젝트 열기`
+- Select a Tuist project root
+- The app runs `tuist graph --format json` internally and loads the graph
 
-### 3. 그래프 좁혀 보기
+### 2. Or open JSON directly
 
-- 왼쪽 목록에서 기준 모듈 선택
-- 방향 선택
-- depth 선택
-- 외부 의존성 포함 여부 전환
+- Click `JSON 열기`
+- Load an exported graph JSON file
 
-### 4. 그래프 표현 방식 전환
+### 3. Narrow the graph
+
+- Select the focus module from the left sidebar
+- Choose `양방향`, `의존하는 쪽`, or `의존받는 쪽`
+- Limit depth if needed
+- Toggle external dependencies
+
+### 4. Change presentation
 
 - `펼침`
-  - 각 모듈을 개별 카드로 표시
+  - Shows every module as its own card
 - `계층`
-  - 같은 level의 노드를 하나의 계층 카드로 묶어서 표시
-  - 계층 카드를 누르면 오른쪽에 그 계층에 속한 모듈 리스트가 표시됨
+  - Groups same-level modules into one card
+  - Click a level card to inspect the modules inside it
 
-## 그래프 조작
+### 5. Inspect connection paths
 
-- 오른쪽 위 줌 패널로 확대/축소
-- 트랙패드 pinch 줌
-- `space + drag`로 캔버스 이동
-- `control + wheel`로 확대/축소
+- In expanded mode, click any node in the graph
+- The left-side focus stays fixed
+- TuistSpider finds multiple visible paths between:
+  - the focused module
+  - the clicked module
+- Each path gets its own color
+- Use the right inspector to:
+  - show all paths
+  - hide all paths
+  - toggle specific paths only
 
-## 외부 의존성 처리
+## Controls
 
-외부 의존성 토글은 아래 케이스를 external로 처리합니다.
+- Zoom panel in the top-right corner
+- Trackpad pinch to zoom
+- `space + drag` to pan
+- `control + wheel` to zoom
 
-- Tuist dependency kind가 `package`, `packageProduct`, `external`, `sdk`, `framework`, `xcframework`, `library` 등인 경우
-- 경로가 프로젝트 루트 밖에 있는 경우
-- 경로에 `checkouts`, `SourcePackages`, `.build`, `.cache`, `CocoaPods`, `Carthage` 등이 포함된 경우
+## External Dependency Detection
 
-즉, Tuist가 서드파티를 `project/target` 형태로 풀어줘도 경로 기반으로 외부 의존성으로 다시 분류합니다.
+The `외부 의존성 포함` toggle treats a node as external when:
 
-## `tuist`를 못 찾는 경우
+- the dependency kind is `package`, `packageProduct`, `external`, `sdk`, `framework`, `xcframework`, `library`, or similar
+- the path is outside the project root
+- the path contains markers like:
+  - `checkouts`
+  - `SourcePackages`
+  - `.build`
+  - `.cache`
+  - `CocoaPods`
+  - `Carthage`
 
-GUI 앱 실행 환경에서는 터미널 PATH가 그대로 전달되지 않을 수 있습니다.  
-그럴 때는 아래처럼 `TUIST_EXECUTABLE`을 직접 넘길 수 있습니다.
+This means third-party modules still get classified correctly even when Tuist resolves them as `project/target`.
+
+## Requirements
+
+- macOS
+- Xcode
+- Tuist CLI installed
+
+Example:
+
+```bash
+brew install tuist
+```
+
+If the app cannot find `tuist` from the GUI environment:
 
 ```bash
 TUIST_EXECUTABLE=/opt/homebrew/bin/tuist ./scripts/run_mac_app.sh
 ```
 
-## 웹 버전
-
-브라우저로 보는 기존 정적 버전도 같이 들어 있습니다.
-
-```bash
-./scripts/run_tuist_spider.sh /path/to/your/tuist/project
-```
-
-## 저장소 구성
+## Repository Layout
 
 - `App/`
-  - SwiftUI macOS 앱
+  - SwiftUI macOS app
 - `Project.swift`
-  - Tuist manifest
+  - Tuist manifest for the app itself
 - `scripts/run_mac_app.sh`
-  - generate + build + app 실행
+  - generate + build + launch
 - `scripts/open_mac_app.sh`
-  - generate + Xcode 열기
+  - generate + open Xcode project
+- `scripts/mac/build-release-zip.sh`
+  - build a Release `.app` and package it as a zip for GitHub Releases
 - `scripts/export_tuist_graph.sh`
-  - Tuist graph export + 정규화
+  - export and normalize Tuist graph data
 - `scripts/normalize_tuist_graph.py`
-  - Tuist `json` / `legacyJSON` 정규화
+  - normalize Tuist `json` / `legacyJSON`
 - `web/`
-  - 기존 정적 웹 뷰어
+  - older static web viewer
 - `examples/TuistFixture`
-  - 테스트용 샘플 Tuist 프로젝트
+  - local sample Tuist project
 
-## 개발 메모
+## Release Workflow
 
-- macOS 앱이 메인 진입점입니다.
-- 웹 버전은 비교용/보조용으로 유지합니다.
-- 현재 그래프는 "중심 모듈 기준 서브그래프 탐색"에 초점을 둡니다.
-- 레이아웃은 전체 자동 배치 엔진이 아니라, level 기반으로 읽기 쉽게 정렬하는 방식입니다.
+The simplest public distribution flow is:
 
-## 앞으로 해볼 만한 것
+1. Push `main`
+2. Run:
 
-- 계층 카드 펼치기/접기 상태를 캔버스 안에서 직접 토글
-- 그래프 검색 결과 하이라이트 강화
-- 노드/계층별 색상 구분 개선
-- export 결과 캐싱
-- 선택한 서브그래프 PNG/SVG 내보내기
+```bash
+./scripts/mac/build-release-zip.sh
+```
+
+3. Open GitHub `Releases`
+4. Create a new release
+5. Upload `dist/TuistSpider.app.zip`
+6. Share the release URL
+
+If you want, the next step can be automating this with GitHub Actions so every tag builds and uploads the app zip automatically.
