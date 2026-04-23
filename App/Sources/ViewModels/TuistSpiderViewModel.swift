@@ -35,9 +35,139 @@ struct NewModuleAlertContext: Identifiable, Equatable, Sendable {
     }
 }
 
+enum SpiderGraphRelatedNodeConnectionKind: String, Hashable, Sendable {
+    case mutualDirect
+    case directDependency
+    case directDependent
+    case indirect
+
+    var title: String {
+        switch self {
+        case .mutualDirect:
+            return "서로 직접 연결"
+        case .directDependency:
+            return "내가 직접 의존"
+        case .directDependent:
+            return "나에게 직접 의존"
+        case .indirect:
+            return "간접 연결"
+        }
+    }
+
+    var isDirect: Bool {
+        switch self {
+        case .mutualDirect, .directDependency, .directDependent:
+            return true
+        case .indirect:
+            return false
+        }
+    }
+}
+
+struct SpiderGraphRelatedNodeConnectionItem: Identifiable, Hashable, Sendable {
+    let node: SpiderGraphNode
+    let kind: SpiderGraphRelatedNodeConnectionKind
+
+    var id: String { node.id }
+}
+
+struct SpiderGraphRelatedConnectionPathCell: Identifiable, Hashable, Sendable {
+    let targetNode: SpiderGraphNode
+    let relationshipKind: SpiderGraphRelatedNodeConnectionKind
+    let path: SpiderGraphConnectionPath?
+    let previewText: String
+
+    var id: String {
+        if let path {
+            return "\(targetNode.id)::\(path.id)"
+        }
+        return "\(targetNode.id)::\(relationshipKind.rawValue)"
+    }
+
+    var isDirectConnection: Bool {
+        path?.isDirectConnection ?? relationshipKind.isDirect
+    }
+
+    var scopeLabel: String {
+        path?.dependencyScopeLabel ?? relationshipKind.title
+    }
+
+    var pathBadgeText: String? {
+        path?.kind.badgeText
+    }
+}
+
+struct ConnectionPathFilterMismatchNotice: Equatable, Sendable {
+    let message: String
+    let suggestedFilter: SpiderGraphConnectionPathFilter
+    let actionTitle: String
+}
+
 private struct PreparedPresentationGraph {
     let graph: SpiderGraph
     let newlyDiscoveredNodes: [SpiderGraphNode]
+}
+
+private struct ReachableDepthCacheKey: Hashable {
+    let rootID: String
+    let direction: GraphDirection
+    let includeExternal: Bool
+    let layerFilter: SpiderGraphLayerFilter
+}
+
+private struct SubgraphCacheKey: Hashable {
+    let rootID: String
+    let direction: GraphDirection
+    let depth: GraphDepth
+    let includeExternal: Bool
+    let layerFilter: SpiderGraphLayerFilter
+}
+
+private struct NodeListCacheKey: Hashable {
+    let nodeID: String
+    let includeExternal: Bool
+    let layerFilter: SpiderGraphLayerFilter
+}
+
+private struct ConnectionPathCacheKey: Hashable {
+    let subgraphSignature: Int
+    let startID: String
+    let endID: String
+    let maxPaths: Int
+    let maxExtraHops: Int
+}
+
+private struct RelationshipDirectionCacheKey: Hashable {
+    let subgraphSignature: Int
+    let focusedNodeID: String
+    let selectedNodeID: String
+}
+
+private struct FilteredSubgraphCacheKey: Hashable {
+    let subgraphSignature: Int
+    let nodeIDs: [String]
+    let edgeIDs: [String]
+}
+
+private struct RelatedConnectionPathCellCacheKey: Hashable {
+    let subgraphSignature: Int
+    let focusedNodeID: String
+    let targetNodeID: String
+    let maxPaths: Int
+}
+
+private enum CachedConnectionPathLookup {
+    case result(SpiderGraphConnectionPathResult)
+    case none
+
+    var value: SpiderGraphConnectionPathResult? {
+        switch self {
+        case let .result(result):
+            return result
+        case .none:
+            return nil
+        }
+    }
 }
 
 @MainActor
@@ -52,7 +182,11 @@ final class TuistSpiderViewModel: ObservableObject {
     static let newModulesLayerTitle = SpiderGraphNode.newModulesLayerTitle
     static let automaticUpdateCheckInterval: TimeInterval = 60 * 60 * 12
 
-    @Published private(set) var graph = SampleGraph.make()
+    @Published private(set) var graph = SampleGraph.make() {
+        didSet {
+            invalidateGraphComputationCaches()
+        }
+    }
     @Published var selectedNodeID: String? {
         didSet {
             guard !isRestoringPreferences else { return }
@@ -64,7 +198,14 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published var showOnlyActivePaths = false {
         didSet {
             guard !isRestoringPreferences else { return }
-            refreshDisplayedSubgraph()
+            scheduleDisplayedSubgraphRefresh()
+            persistPreferences()
+        }
+    }
+    @Published var selectedConnectionPathFilter: SpiderGraphConnectionPathFilter = .all {
+        didSet {
+            guard !isRestoringPreferences else { return }
+            scheduleDisplayedSubgraphRefresh()
             persistPreferences()
         }
     }
@@ -162,6 +303,14 @@ final class TuistSpiderViewModel: ObservableObject {
     private let preferences = UserDefaults.standard
     private var isRestoringPreferences = false
     private var hasPerformedInitialUpdateCheck = false
+    private var reachableDepthCache: [ReachableDepthCacheKey: Int] = [:]
+    private var subgraphCache: [SubgraphCacheKey: SpiderGraphSubgraph] = [:]
+    private var directDependenciesCache: [NodeListCacheKey: [SpiderGraphNode]] = [:]
+    private var directDependentsCache: [NodeListCacheKey: [SpiderGraphNode]] = [:]
+    private var connectionPathCache: [ConnectionPathCacheKey: CachedConnectionPathLookup] = [:]
+    private var relationshipDirectionCache: [RelationshipDirectionCacheKey: SpiderGraphRelationshipDirection] = [:]
+    private var filteredSubgraphCache: [FilteredSubgraphCacheKey: SpiderGraphSubgraph] = [:]
+    private var relatedConnectionPathCellCache: [RelatedConnectionPathCellCacheKey: [SpiderGraphRelatedConnectionPathCell]] = [:]
 
     init() {
         restorePreferences(for: graph)
@@ -258,8 +407,78 @@ final class TuistSpiderViewModel: ObservableObject {
         return selectedNode
     }
 
+    var focusedDirectDependencies: [SpiderGraphNode] {
+        guard let selectedNodeID else { return [] }
+        return cachedDirectDependencies(of: selectedNodeID)
+    }
+
+    var focusedDirectDependents: [SpiderGraphNode] {
+        guard let selectedNodeID else { return [] }
+        return cachedDirectDependents(of: selectedNodeID)
+    }
+
+    var relatedConnectionItems: [SpiderGraphRelatedNodeConnectionItem] {
+        guard let selectedNodeID else { return [] }
+
+        let directDependencyIDs = Set(focusedDirectDependencies.map(\.id))
+        let directDependentIDs = Set(focusedDirectDependents.map(\.id))
+
+        return visibleSubgraph.nodes
+            .filter { $0.id != selectedNodeID }
+            .compactMap { node in
+                let isDirectDependency = directDependencyIDs.contains(node.id)
+                let isDirectDependent = directDependentIDs.contains(node.id)
+
+                let kind: SpiderGraphRelatedNodeConnectionKind
+                switch (isDirectDependency, isDirectDependent) {
+                case (true, true):
+                    kind = .mutualDirect
+                case (true, false):
+                    kind = .directDependency
+                case (false, true):
+                    kind = .directDependent
+                case (false, false):
+                    kind = .indirect
+                }
+
+                guard selectedConnectionPathFilter == .all
+                    || selectedConnectionPathFilter == .directOnly && kind.isDirect
+                    || selectedConnectionPathFilter == .indirectOnly && !kind.isDirect
+                else {
+                    return nil
+                }
+
+                return SpiderGraphRelatedNodeConnectionItem(node: node, kind: kind)
+            }
+            .sorted { lhs, rhs in
+                if lhs.kind != rhs.kind {
+                    return relatedNodeConnectionSortRank(lhs.kind) < relatedNodeConnectionSortRank(rhs.kind)
+                }
+
+                let lhsName = lhs.node.name
+                let rhsName = rhs.node.name
+                if lhsName != rhsName { return lhsName < rhsName }
+                return lhs.node.id < rhs.node.id
+            }
+    }
+
+    var filteredRelatedConnectionItems: [SpiderGraphRelatedNodeConnectionItem] {
+        let query = relatedNodeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return relatedConnectionItems }
+
+        return relatedConnectionItems.filter { item in
+            item.node.name.lowercased().contains(query)
+                || item.node.projectLabel.lowercased().contains(query)
+                || item.node.layerLabel.lowercased().contains(query)
+        }
+    }
+
+    var availableConnectionPaths: [SpiderGraphConnectionPath] {
+        connectionPaths.filter(selectedConnectionPathFilter.includes(_:))
+    }
+
     var activeConnectionPathIDs: Set<String> {
-        let availablePathIDs = Set(connectionPaths.map(\.id))
+        let availablePathIDs = Set(availableConnectionPaths.map(\.id))
         guard !availablePathIDs.isEmpty else { return [] }
 
         guard let selectedConnectionPathIDs else {
@@ -275,7 +494,7 @@ final class TuistSpiderViewModel: ObservableObject {
     }
 
     var activeConnectionPaths: [SpiderGraphConnectionPath] {
-        connectionPaths.filter { activeConnectionPathIDs.contains($0.id) }
+        availableConnectionPaths.filter { activeConnectionPathIDs.contains($0.id) }
     }
 
     var activeConnectionPathNodeIDs: Set<String> {
@@ -288,6 +507,107 @@ final class TuistSpiderViewModel: ObservableObject {
 
     var activeConnectionPathCount: Int {
         activeConnectionPaths.count
+    }
+
+    var hasConnectionPathContext: Bool {
+        !availableConnectionPaths.isEmpty
+    }
+
+    var connectionPathFilterMismatchNotice: ConnectionPathFilterMismatchNotice? {
+        guard
+            graphSelectedNode != nil,
+            !connectionPaths.isEmpty,
+            availableConnectionPaths.isEmpty
+        else {
+            return nil
+        }
+
+        let hasDirectPath = connectionPaths.contains(where: \.isDirectConnection)
+        let hasIndirectPath = connectionPaths.contains { !$0.isDirectConnection }
+
+        switch selectedConnectionPathFilter {
+        case .directOnly where !hasDirectPath && hasIndirectPath:
+            return ConnectionPathFilterMismatchNotice(
+                message: "선택한 모듈은 간접 경로만 있어서 `직접만` 필터에서는 선택 경로 보기를 켤 수 없습니다.",
+                suggestedFilter: .indirectOnly,
+                actionTitle: "간접만으로 전환"
+            )
+        case .indirectOnly where !hasIndirectPath && hasDirectPath:
+            return ConnectionPathFilterMismatchNotice(
+                message: "선택한 모듈은 직접 경로만 있어서 `간접만` 필터에서는 선택 경로 보기를 켤 수 없습니다.",
+                suggestedFilter: .directOnly,
+                actionTitle: "직접만으로 전환"
+            )
+        default:
+            return nil
+        }
+    }
+
+    func connectionPathCellItems(for item: SpiderGraphRelatedNodeConnectionItem) -> [SpiderGraphRelatedConnectionPathCell] {
+        guard let focusedNodeID = selectedNodeID else { return [] }
+
+        let key = RelatedConnectionPathCellCacheKey(
+            subgraphSignature: visibleSubgraph.renderSignature,
+            focusedNodeID: focusedNodeID,
+            targetNodeID: item.node.id,
+            maxPaths: connectionPathLimit
+        )
+
+        let cachedItems: [SpiderGraphRelatedConnectionPathCell]
+        if let cached = relatedConnectionPathCellCache[key] {
+            cachedItems = cached
+        } else {
+            let paths = cachedConnectionPaths(
+                in: visibleSubgraph,
+                from: focusedNodeID,
+                to: item.node.id,
+                maxPaths: connectionPathLimit
+            )
+
+            if paths.isEmpty {
+                let fallbackPreview: String = switch item.kind {
+                case .directDependency:
+                    "\(graph.nodeMap[focusedNodeID]?.name ?? focusedNodeID) -> \(item.node.name)"
+                case .directDependent:
+                    "\(item.node.name) -> \(graph.nodeMap[focusedNodeID]?.name ?? focusedNodeID)"
+                case .mutualDirect:
+                    "\(graph.nodeMap[focusedNodeID]?.name ?? focusedNodeID) <-> \(item.node.name)"
+                case .indirect:
+                    "경로를 찾지 못했습니다."
+                }
+
+                cachedItems = [
+                    SpiderGraphRelatedConnectionPathCell(
+                        targetNode: item.node,
+                        relationshipKind: item.kind,
+                        path: nil,
+                        previewText: fallbackPreview
+                    )
+                ]
+            } else {
+                cachedItems = paths.map { path in
+                    SpiderGraphRelatedConnectionPathCell(
+                        targetNode: item.node,
+                        relationshipKind: item.kind,
+                        path: path,
+                        previewText: path.preview(using: graph.nodeMap)
+                    )
+                }
+            }
+
+            relatedConnectionPathCellCache[key] = cachedItems
+        }
+
+        return cachedItems.filter { cell in
+            switch selectedConnectionPathFilter {
+            case .all:
+                return true
+            case .directOnly:
+                return cell.isDirectConnection
+            case .indirectOnly:
+                return !cell.isDirectConnection
+            }
+        }
     }
 
     var isUsingExpandedConnectionPathLimit: Bool {
@@ -415,6 +735,7 @@ final class TuistSpiderViewModel: ObservableObject {
         presentationMode = .expanded
         includeExternal = false
         selectedLayerFilter = .all
+        selectedConnectionPathFilter = .all
         searchText = ""
         relatedNodeSearchText = ""
         zoomScale = Self.defaultZoomScale
@@ -454,11 +775,24 @@ final class TuistSpiderViewModel: ObservableObject {
         selectedLevel = level
     }
 
-    func selectRelatedNode(_ nodeID: String) {
+    func selectRelatedNode(_ nodeID: String, preferredPathID: String? = nil) {
         guard nodeID != selectedNodeID else { return }
+        let nextSelection = preferredPathID.map { Set([$0]) }
+        let isSameTarget = graphSelectedNodeID == nodeID
+
+        if isSameTarget, nextSelection == selectedConnectionPathIDs, preferredPathID != nil {
+            clearRelatedNodeSelection()
+            return
+        }
+
         graphSelectedNodeID = nodeID
-        resetConnectionPathState()
-        refreshDerivedState()
+        selectedConnectionPathIDs = nextSelection
+
+        if isSameTarget {
+            refreshDisplayedSubgraph()
+        } else {
+            refreshDerivedState()
+        }
     }
 
     func clearRelatedNodeSelection() {
@@ -469,7 +803,7 @@ final class TuistSpiderViewModel: ObservableObject {
     }
 
     func selectFirstMatchingRelatedNode() {
-        guard let nodeID = filteredRelatedNodes.first?.id else { return }
+        guard let nodeID = filteredRelatedConnectionItems.first?.node.id else { return }
         selectRelatedNode(nodeID)
     }
 
@@ -499,7 +833,7 @@ final class TuistSpiderViewModel: ObservableObject {
     }
 
     func toggleConnectionPath(_ pathID: String, additiveSelection: Bool = false) {
-        let availablePathIDs = Set(connectionPaths.map(\.id))
+        let availablePathIDs = Set(availableConnectionPaths.map(\.id))
         guard availablePathIDs.contains(pathID) else { return }
 
         if showOnlyActivePaths {
@@ -810,6 +1144,9 @@ final class TuistSpiderViewModel: ObservableObject {
         self.showOnlyActivePaths = hasScopedPreference(for: .showOnlyActivePaths, scopeID: scopeID)
             ? preferences.bool(forKey: scopedPreferenceKey(.showOnlyActivePaths, scopeID: scopeID))
             : false
+        self.selectedConnectionPathFilter = preferences.string(forKey: scopedPreferenceKey(.selectedConnectionPathFilter, scopeID: scopeID))
+            .flatMap(SpiderGraphConnectionPathFilter.init(rawValue:))
+            ?? .all
         self.includeExternal = hasScopedPreference(for: .includeExternal, scopeID: scopeID)
             ? preferences.bool(forKey: scopedPreferenceKey(.includeExternal, scopeID: scopeID))
             : false
@@ -836,6 +1173,7 @@ final class TuistSpiderViewModel: ObservableObject {
         preferences.set(depth.rawValue, forKey: scopedPreferenceKey(.depth, scopeID: scopeID))
         preferences.set(presentationMode.rawValue, forKey: scopedPreferenceKey(.presentationMode, scopeID: scopeID))
         preferences.set(showOnlyActivePaths, forKey: scopedPreferenceKey(.showOnlyActivePaths, scopeID: scopeID))
+        preferences.set(selectedConnectionPathFilter.rawValue, forKey: scopedPreferenceKey(.selectedConnectionPathFilter, scopeID: scopeID))
         preferences.set(includeExternal, forKey: scopedPreferenceKey(.includeExternal, scopeID: scopeID))
         preferences.set(searchText, forKey: scopedPreferenceKey(.searchText, scopeID: scopeID))
         preferences.set(selectedLayerFilter.persistedValue, forKey: scopedPreferenceKey(.selectedLayerFilter, scopeID: scopeID))
@@ -986,13 +1324,7 @@ final class TuistSpiderViewModel: ObservableObject {
             return
         }
 
-        visibleSubgraph = graph.subgraph(
-            centeredOn: selectedNodeID,
-            direction: direction,
-            depth: depth,
-            includeExternal: includeExternal,
-            layerFilter: selectedLayerFilter
-        )
+        visibleSubgraph = cachedVisibleSubgraph(centeredOn: selectedNodeID)
 
         if let graphSelectedNodeID, !visibleSubgraph.nodeIDs.contains(graphSelectedNodeID) {
             self.graphSelectedNodeID = nil
@@ -1007,12 +1339,7 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private func availableDepthOptions(for nodeID: String?) -> [GraphDepth] {
         guard let nodeID else { return [.all] }
-        let maxDepth = graph.maxReachableDepth(
-            centeredOn: nodeID,
-            direction: direction,
-            includeExternal: includeExternal,
-            layerFilter: selectedLayerFilter
-        )
+        let maxDepth = cachedMaxReachableDepth(centeredOn: nodeID)
         guard maxDepth > 0 else { return [.all] }
         return (1...maxDepth).map { GraphDepth(maxDepth: $0) } + [.all]
     }
@@ -1031,16 +1358,8 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private func refreshInspectorState() {
         if let inspectedNodeID = inspectedNode?.id {
-            directDependencies = graph.directDependencies(
-                of: inspectedNodeID,
-                includeExternal: includeExternal,
-                layerFilter: selectedLayerFilter
-            )
-            directDependents = graph.directDependents(
-                of: inspectedNodeID,
-                includeExternal: includeExternal,
-                layerFilter: selectedLayerFilter
-            )
+            directDependencies = cachedDirectDependencies(of: inspectedNodeID)
+            directDependents = cachedDirectDependents(of: inspectedNodeID)
         } else {
             directDependencies = []
             directDependents = []
@@ -1056,26 +1375,27 @@ final class TuistSpiderViewModel: ObservableObject {
             return
         }
 
-        let connectionPathResult = visibleSubgraph.connectionPaths(
+        let connectionPathResult = cachedConnectionPathLookup(
+            in: visibleSubgraph,
             from: focusedNodeID,
             to: graphSelectedNodeID,
-            maxPaths: connectionPathLimit,
-            maxExtraHops: Self.connectionPathExtraHops
+            maxPaths: connectionPathLimit
         )
 
-        connectionPaths = connectionPathResult?.paths ?? []
-        hasTruncatedConnectionPaths = connectionPathResult?.isTruncated == true
-        connectionDirection = graph.relationshipDirection(
+        connectionPaths = connectionPathResult?.value?.paths ?? []
+        hasTruncatedConnectionPaths = connectionPathResult?.value?.isTruncated == true
+        connectionDirection = cachedRelationshipDirection(
+            in: visibleSubgraph,
             from: focusedNodeID,
-            to: graphSelectedNodeID,
-            restrictedTo: visibleSubgraph.nodeIDs
+            to: graphSelectedNodeID
         )
     }
 
     private func refreshDisplayedSubgraph() {
         if showOnlyActivePaths && !activeConnectionPaths.isEmpty {
-            displayedSubgraph = visibleSubgraph.filtered(
-                toNodeIDs: activeConnectionPathNodeIDs,
+            displayedSubgraph = cachedFilteredSubgraph(
+                from: visibleSubgraph,
+                nodeIDs: activeConnectionPathNodeIDs,
                 edgeIDs: activeConnectionPathEdgeIDs
             )
         } else {
@@ -1091,6 +1411,198 @@ final class TuistSpiderViewModel: ObservableObject {
 
     private func requestViewportCentering() {
         viewportCenterRequestID &+= 1
+    }
+
+    private func scheduleDisplayedSubgraphRefresh() {
+        Task { @MainActor [weak self] in
+            self?.refreshDisplayedSubgraph()
+        }
+    }
+
+    private func invalidateGraphComputationCaches() {
+        reachableDepthCache.removeAll(keepingCapacity: true)
+        subgraphCache.removeAll(keepingCapacity: true)
+        directDependenciesCache.removeAll(keepingCapacity: true)
+        directDependentsCache.removeAll(keepingCapacity: true)
+        connectionPathCache.removeAll(keepingCapacity: true)
+        relationshipDirectionCache.removeAll(keepingCapacity: true)
+        filteredSubgraphCache.removeAll(keepingCapacity: true)
+        relatedConnectionPathCellCache.removeAll(keepingCapacity: true)
+    }
+
+    private func cachedMaxReachableDepth(centeredOn rootID: String) -> Int {
+        let key = ReachableDepthCacheKey(
+            rootID: rootID,
+            direction: direction,
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
+        )
+
+        if let cached = reachableDepthCache[key] {
+            return cached
+        }
+
+        let computed = graph.maxReachableDepth(
+            centeredOn: rootID,
+            direction: direction,
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
+        )
+        reachableDepthCache[key] = computed
+        return computed
+    }
+
+    private func cachedVisibleSubgraph(centeredOn rootID: String) -> SpiderGraphSubgraph {
+        let key = SubgraphCacheKey(
+            rootID: rootID,
+            direction: direction,
+            depth: depth,
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
+        )
+
+        if let cached = subgraphCache[key] {
+            return cached
+        }
+
+        let computed = graph.subgraph(
+            centeredOn: rootID,
+            direction: direction,
+            depth: depth,
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
+        )
+        subgraphCache[key] = computed
+        return computed
+    }
+
+    private func cachedDirectDependencies(of nodeID: String) -> [SpiderGraphNode] {
+        let key = NodeListCacheKey(
+            nodeID: nodeID,
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
+        )
+
+        if let cached = directDependenciesCache[key] {
+            return cached
+        }
+
+        let computed = graph.directDependencies(
+            of: nodeID,
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
+        )
+        directDependenciesCache[key] = computed
+        return computed
+    }
+
+    private func cachedDirectDependents(of nodeID: String) -> [SpiderGraphNode] {
+        let key = NodeListCacheKey(
+            nodeID: nodeID,
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
+        )
+
+        if let cached = directDependentsCache[key] {
+            return cached
+        }
+
+        let computed = graph.directDependents(
+            of: nodeID,
+            includeExternal: includeExternal,
+            layerFilter: selectedLayerFilter
+        )
+        directDependentsCache[key] = computed
+        return computed
+    }
+
+    private func cachedConnectionPathLookup(
+        in subgraph: SpiderGraphSubgraph,
+        from startID: String,
+        to endID: String,
+        maxPaths: Int
+    ) -> CachedConnectionPathLookup? {
+        let key = ConnectionPathCacheKey(
+            subgraphSignature: subgraph.renderSignature,
+            startID: startID,
+            endID: endID,
+            maxPaths: maxPaths,
+            maxExtraHops: Self.connectionPathExtraHops
+        )
+
+        if let cached = connectionPathCache[key] {
+            return cached
+        }
+
+        let computed = subgraph.connectionPaths(
+            from: startID,
+            to: endID,
+            maxPaths: maxPaths,
+            maxExtraHops: Self.connectionPathExtraHops
+        )
+        let lookup = computed.map(CachedConnectionPathLookup.result) ?? CachedConnectionPathLookup.none
+        connectionPathCache[key] = lookup
+        return lookup
+    }
+
+    private func cachedConnectionPaths(
+        in subgraph: SpiderGraphSubgraph,
+        from startID: String,
+        to endID: String,
+        maxPaths: Int
+    ) -> [SpiderGraphConnectionPath] {
+        cachedConnectionPathLookup(
+            in: subgraph,
+            from: startID,
+            to: endID,
+            maxPaths: maxPaths
+        )?.value?.paths ?? []
+    }
+
+    private func cachedRelationshipDirection(
+        in subgraph: SpiderGraphSubgraph,
+        from focusedNodeID: String,
+        to selectedNodeID: String
+    ) -> SpiderGraphRelationshipDirection? {
+        let key = RelationshipDirectionCacheKey(
+            subgraphSignature: subgraph.renderSignature,
+            focusedNodeID: focusedNodeID,
+            selectedNodeID: selectedNodeID
+        )
+
+        if let cached = relationshipDirectionCache[key] {
+            return cached
+        }
+
+        let computed = graph.relationshipDirection(
+            from: focusedNodeID,
+            to: selectedNodeID,
+            restrictedTo: subgraph.nodeIDs
+        )
+        if let computed {
+            relationshipDirectionCache[key] = computed
+        }
+        return computed
+    }
+
+    private func cachedFilteredSubgraph(
+        from subgraph: SpiderGraphSubgraph,
+        nodeIDs: Set<String>,
+        edgeIDs: Set<String>
+    ) -> SpiderGraphSubgraph {
+        let key = FilteredSubgraphCacheKey(
+            subgraphSignature: subgraph.renderSignature,
+            nodeIDs: nodeIDs.sorted(),
+            edgeIDs: edgeIDs.sorted()
+        )
+
+        if let cached = filteredSubgraphCache[key] {
+            return cached
+        }
+
+        let computed = subgraph.filtered(toNodeIDs: nodeIDs, edgeIDs: edgeIDs)
+        filteredSubgraphCache[key] = computed
+        return computed
     }
 
     private func matchesNodeListFilters(_ node: SpiderGraphNode) -> Bool {
@@ -1117,11 +1629,25 @@ final class TuistSpiderViewModel: ObservableObject {
             ?? graph.nodes.first?.id
     }
 
+    private func relatedNodeConnectionSortRank(_ kind: SpiderGraphRelatedNodeConnectionKind) -> Int {
+        switch kind {
+        case .mutualDirect:
+            return 0
+        case .directDependency:
+            return 1
+        case .directDependent:
+            return 2
+        case .indirect:
+            return 3
+        }
+    }
+
     private enum PreferencesKey: String {
         case direction
         case depth
         case presentationMode
         case showOnlyActivePaths
+        case selectedConnectionPathFilter
         case includeExternal
         case searchText
         case selectedLayerFilter

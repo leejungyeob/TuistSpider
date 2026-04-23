@@ -3,7 +3,30 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    private enum InspectorTab: String, CaseIterable, Identifiable {
+        case overview
+        case layer
+        case paths
+        case metadata
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .overview:
+                return "요약"
+            case .layer:
+                return "레이어"
+            case .paths:
+                return "경로"
+            case .metadata:
+                return "메타데이터"
+            }
+        }
+    }
+
     @StateObject private var viewModel = TuistSpiderViewModel()
+    @State private var selectedInspectorTab: InspectorTab = .overview
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -259,7 +282,7 @@ struct ContentView: View {
                 graphSelectedNodeID: viewModel.visibleGraphSelectedNodeID,
                 selectedLevel: viewModel.selectedLevel,
                 connectionPaths: viewModel.activeConnectionPaths,
-                hasConnectionPathContext: viewModel.graphSelectedNode != nil && !viewModel.connectionPaths.isEmpty,
+                hasConnectionPathContext: viewModel.hasConnectionPathContext,
                 focusRequestID: viewModel.viewportCenterRequestID,
                 zoomScale: $viewModel.zoomScale,
                 onSelect: { nodeID in
@@ -296,28 +319,9 @@ struct ContentView: View {
                             .textSelection(.enabled)
                     }
 
-                    if viewModel.canEditLayerClassification(for: node) {
-                        layerEditorSection(node: node)
-                    }
+                    inspectorTabPicker
 
-                    if let focusedNode = viewModel.selectedNode {
-                        relatedNodeSearchSection(focusedNode: focusedNode)
-                    }
-
-                    if let focusedNode = viewModel.selectedNode,
-                       let targetNode = viewModel.graphSelectedNode,
-                       !viewModel.connectionPaths.isEmpty {
-                        connectionPathsSection(focusedNode: focusedNode, targetNode: targetNode)
-                    }
-
-                    HStack(spacing: 10) {
-                        statCard(title: "직접 의존", value: "\(viewModel.directDependencies.count)")
-                        statCard(title: "직접 역의존", value: "\(viewModel.directDependents.count)")
-                    }
-
-                    dependencySection(title: "직접 의존성", nodes: viewModel.directDependencies)
-                    dependencySection(title: "직접 역의존성", nodes: viewModel.directDependents)
-                    metadataSection(node: node)
+                    inspectorTabContent(node: node)
                 } else {
                     ContentUnavailableView(
                         "모듈을 선택하세요",
@@ -331,6 +335,29 @@ struct ContentView: View {
             .padding(20)
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.18))
+    }
+
+    private var inspectorTabPicker: some View {
+        Picker("Inspector", selection: $selectedInspectorTab) {
+            ForEach(InspectorTab.allCases) { tab in
+                Text(tab.title).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private func inspectorTabContent(node: SpiderGraphNode) -> some View {
+        switch selectedInspectorTab {
+        case .overview:
+            overviewInspector(node: node)
+        case .layer:
+            layerInspector(node: node)
+        case .paths:
+            pathsInspector(node: node)
+        case .metadata:
+            metadataSection(node: node)
+        }
     }
 
     private var loadingOverlay: some View {
@@ -373,6 +400,49 @@ struct ContentView: View {
         }
     }
 
+    private func overviewInspector(node: SpiderGraphNode) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 10) {
+                statCard(title: "직접 의존", value: "\(viewModel.directDependencies.count)")
+                statCard(title: "나에게 직접 의존", value: "\(viewModel.directDependents.count)")
+            }
+
+            dependencySection(title: "내가 직접 의존하는 모듈", nodes: viewModel.directDependencies)
+            dependencySection(title: "나에게 직접 의존하는 모듈", nodes: viewModel.directDependents)
+        }
+    }
+
+    private func layerInspector(node: SpiderGraphNode) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if viewModel.canEditLayerClassification(for: node) {
+                layerEditorSection(node: node)
+            } else {
+                infoMessageCard(
+                    title: "레이어 편집 불가",
+                    message: "외부 의존성이나 저장 대상이 아닌 노드는 레이어 스냅샷에 저장할 수 없습니다."
+                )
+            }
+        }
+    }
+
+    private func pathsInspector(node: SpiderGraphNode) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            infoMessageCard(
+                title: "경로 표시 기준",
+                message: "선택한 모듈과 연결된 모듈 목록을 보여주고, 각 셀 안에서 경로를 바로 확인할 수 있습니다. 행을 선택하면 그래프 강조와 `선택 경로만 보기` 대상이 됩니다."
+            )
+
+            if let focusedNode = viewModel.selectedNode {
+                connectionOverviewSection(focusedNode: focusedNode)
+            } else {
+                infoMessageCard(
+                    title: "기준 노드 없음",
+                    message: "먼저 왼쪽 목록에서 기준 모듈을 선택해야 경로를 계산할 수 있습니다."
+                )
+            }
+        }
+    }
+
     private func exportCurrentGraphAsPNG() {
         guard viewModel.canExportCurrentGraphAsPNG else { return }
 
@@ -396,7 +466,7 @@ struct ContentView: View {
             graphSelectedNodeID: viewModel.visibleGraphSelectedNodeID,
             selectedLevel: viewModel.selectedLevel,
             connectionPaths: viewModel.activeConnectionPaths,
-            hasConnectionPathContext: viewModel.graphSelectedNode != nil && !viewModel.connectionPaths.isEmpty
+            hasConnectionPathContext: viewModel.hasConnectionPathContext
         )
 
         do {
@@ -418,6 +488,20 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.title3.weight(.bold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func infoMessageCard(title: String, message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -466,203 +550,182 @@ struct ContentView: View {
         }
     }
 
-    private func connectionPathsSection(focusedNode: SpiderGraphNode, targetNode: SpiderGraphNode) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func connectionOverviewSection(focusedNode: SpiderGraphNode) -> some View {
+        let directCount = viewModel.relatedConnectionItems.filter(\.kind.isDirect).count
+        let indirectCount = viewModel.relatedConnectionItems.count - directCount
+        let isSearching = !viewModel.relatedNodeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text("연결 경로")
+                Text("연결 모듈")
                     .font(.headline)
                 Spacer()
-                Text("\(viewModel.activeConnectionPathCount) / \(viewModel.connectionPaths.count)")
+                Text(isSearching
+                     ? "\(viewModel.filteredRelatedConnectionItems.count) / \(viewModel.relatedConnectionItems.count)개"
+                     : "\(viewModel.relatedConnectionItems.count)개")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
 
-            Text("\(focusedNode.name) -> \(targetNode.name)")
+            Text(connectionOverviewDescription(focusedNode: focusedNode))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-
-            if let relationship = viewModel.connectionDirection {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("의존성 방향")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    HStack(alignment: .center, spacing: 10) {
-                        Text(relationship.badgeText)
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(directionColor(for: relationship))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(directionColor(for: relationship).opacity(0.14), in: Capsule())
-
-                        Text(relationship.description(focusedName: focusedNode.name, selectedName: targetNode.name))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(12)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-            }
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
-                Button("전체 보기") {
-                    viewModel.showAllConnectionPaths()
-                }
-                .buttonStyle(.bordered)
-
-                Button("모두 숨김") {
-                    viewModel.hideAllConnectionPaths()
-                }
-                .buttonStyle(.bordered)
+                StatusPill(title: "직접 연결 \(directCount)", tint: .green)
+                StatusPill(title: "간접 연결 \(indirectCount)", tint: .orange)
             }
 
-            Toggle("선택 경로만 보기", isOn: $viewModel.showOnlyActivePaths)
-                .toggleStyle(.switch)
-                .disabled(viewModel.connectionPaths.isEmpty)
-
-            if viewModel.showOnlyActivePaths {
-                Text("활성화된 경로에 포함된 노드와 간선만 그래프에 남깁니다. Shift + 클릭으로 경로를 추가하거나 제거할 수 있습니다.")
+            VStack(alignment: .leading, spacing: 8) {
+                Text("연결 필터")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
 
-            if viewModel.hasTruncatedConnectionPaths {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("경로가 많아 상위 \(viewModel.connectionPathLimit)개만 표시합니다.")
+                Picker("경로 필터", selection: $viewModel.selectedConnectionPathFilter) {
+                    ForEach(SpiderGraphConnectionPathFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .disabled(viewModel.relatedConnectionItems.isEmpty)
+
+                if viewModel.selectedConnectionPathFilter == .indirectOnly {
+                    Text("여기서의 간접 연결은 직접 붙어 있지는 않지만 현재 그래프 범위 안에서 경로로 이어지는 모듈입니다.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
 
-                    HStack(spacing: 8) {
-                        Button("더 보기 (+\(TuistSpiderViewModel.connectionPathLimitStep))") {
-                            viewModel.increaseConnectionPathLimit()
+                Toggle("선택 경로만 보기", isOn: $viewModel.showOnlyActivePaths)
+                    .toggleStyle(.switch)
+                    .disabled(!viewModel.hasConnectionPathContext)
+
+                if let notice = viewModel.connectionPathFilterMismatchNotice {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(notice.message)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+
+                        Button(notice.actionTitle) {
+                            viewModel.selectedConnectionPathFilter = notice.suggestedFilter
                         }
                         .buttonStyle(.bordered)
-
-                        if viewModel.isUsingExpandedConnectionPathLimit {
-                            Button("초기값") {
-                                viewModel.resetConnectionPathLimit()
-                            }
-                            .buttonStyle(.bordered)
-                        }
+                        .controlSize(.small)
                     }
                 }
-            } else if viewModel.isUsingExpandedConnectionPathLimit {
-                Button("경로 제한 초기화") {
-                    viewModel.resetConnectionPathLimit()
-                }
-                .buttonStyle(.bordered)
-            }
 
-            ForEach(viewModel.connectionPaths) { path in
-                Button {
-                    viewModel.toggleConnectionPath(
-                        path.id,
-                        additiveSelection: viewModel.showOnlyActivePaths && NSEvent.modifierFlags.contains(.shift)
-                    )
-                } label: {
-                    HStack(alignment: .top, spacing: 10) {
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .fill(GraphPathPalette.color(at: path.paletteIndex))
-                            .frame(width: 10, height: 28)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("경로 \(path.paletteIndex + 1)")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                Text(path.kind.badgeText)
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(GraphPathPalette.color(at: path.paletteIndex))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        GraphPathPalette.color(at: path.paletteIndex).opacity(0.14),
-                                        in: Capsule()
-                                    )
-                                Spacer()
-                                Text("\(path.edgeCount) hops")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Text(path.preview(using: viewModel.graph.nodeMap))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(3)
-                        }
-
-                        Image(systemName: viewModel.isConnectionPathVisible(path.id) ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(viewModel.isConnectionPathVisible(path.id) ? GraphPathPalette.color(at: path.paletteIndex) : .secondary)
-                    }
-                    .padding(12)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func relatedNodeSearchSection(focusedNode: SpiderGraphNode) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("연관 노드 검색")
-                    .font(.headline)
-                Spacer()
-                if let selectedNode = viewModel.graphSelectedNode {
-                    Button("선택 해제") {
-                        viewModel.clearRelatedNodeSelection()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Text(selectedNode.name)
-                        .font(.caption.weight(.semibold))
+                if viewModel.showOnlyActivePaths {
+                    Text("선택한 연관 모듈의 활성 경로만 그래프에 남깁니다. Shift + 클릭으로 경로를 추가하거나 제거할 수 있습니다.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            Text("\(focusedNode.name) 기준으로 현재 그래프 범위 안에서 비교할 노드를 찾습니다.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             ProminentInputField(
-                title: "연관 노드 검색",
-                placeholder: "이름 또는 프로젝트명",
-                systemImage: "scope",
+                title: "연결 모듈 검색",
+                placeholder: "이름, 프로젝트, 레이어",
+                systemImage: "magnifyingglass",
                 text: $viewModel.relatedNodeSearchText,
                 onSubmit: {
                     viewModel.selectFirstMatchingRelatedNode()
                 }
             )
 
-            if viewModel.relatedNodeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("이름이나 프로젝트명으로 검색하면 현재 그래프에 보이는 노드만 후보로 나옵니다.")
+            if viewModel.relatedConnectionItems.isEmpty {
+                Text("현재 필터에서는 연결된 모듈이 없습니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if viewModel.filteredRelatedNodes.isEmpty {
-                Text("현재 필터 범위에서 일치하는 노드가 없습니다.")
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else if viewModel.filteredRelatedConnectionItems.isEmpty {
+                Text("검색 결과가 없습니다. 다른 이름이나 프로젝트명으로 다시 찾아보세요.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    RelatedNodeSearchResults(
-                        nodes: viewModel.filteredRelatedNodesPreview,
-                        selectedNodeID: viewModel.visibleGraphSelectedNodeID,
-                        onSelect: { nodeID in
-                            viewModel.selectRelatedNode(nodeID)
-                        }
-                    )
-
-                    if viewModel.filteredRelatedNodes.count > 8 {
-                        Text("검색 결과 \(viewModel.filteredRelatedNodes.count)개 중 상위 8개만 표시합니다. 더 좁게 검색해보세요.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.filteredRelatedConnectionItems) { item in
+                        relatedConnectionItemSection(item: item)
                     }
                 }
             }
         }
+    }
+
+    private func connectionOverviewDescription(focusedNode: SpiderGraphNode) -> String {
+        if let selectedNode = viewModel.graphSelectedNode {
+            return "\(focusedNode.name)와 연결된 모듈 목록을 보여주고 있습니다. 지금은 \(selectedNode.name) 모듈이 그래프 강조 및 선택 경로 대상입니다."
+        }
+        return "\(focusedNode.name) 기준으로 현재 그래프 범위의 연결 모듈과 경로를 셀 안에서 바로 보여줍니다. 검색으로 원하는 모듈만 빠르게 좁힐 수 있습니다."
+    }
+
+    private func relatedConnectionItemSection(item: SpiderGraphRelatedNodeConnectionItem) -> some View {
+        let cells = viewModel.connectionPathCellItems(for: item)
+
+        return ForEach(cells) { cell in
+            relatedConnectionPathCell(cell)
+        }
+    }
+
+    private func relatedConnectionPathCell(_ cell: SpiderGraphRelatedConnectionPathCell) -> some View {
+        let isPinned = cell.targetNode.id == viewModel.visibleGraphSelectedNodeID
+        let isSelectedPath = cell.path.map { viewModel.isConnectionPathVisible($0.id) } ?? isPinned
+
+        return Button {
+            let isShiftSelecting = NSEvent.modifierFlags.contains(.shift)
+
+            if isShiftSelecting,
+               viewModel.showOnlyActivePaths,
+               isPinned,
+               let pathID = cell.path?.id {
+                viewModel.toggleConnectionPath(pathID, additiveSelection: true)
+            } else {
+                viewModel.selectRelatedNode(
+                    cell.targetNode.id,
+                    preferredPathID: cell.path?.id
+                )
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(cell.targetNode.name)
+                            .foregroundStyle(.primary)
+                        HStack(spacing: 6) {
+                            Text(cell.targetNode.projectLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            LayerBadge(layerName: cell.targetNode.layerColorKey, font: .caption2)
+                            StatusPill(
+                                title: cell.scopeLabel,
+                                tint: cell.isDirectConnection ? .green : .orange
+                            )
+                            if let badgeText = cell.pathBadgeText {
+                                StatusPill(title: badgeText, tint: Color.accentColor)
+                            }
+                        }
+                    }
+                    Spacer()
+                    Text(isSelectedPath ? "선택됨" : "그래프 보기")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isSelectedPath ? Color.accentColor : .secondary)
+                }
+
+                Text(cell.previewText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private func layerEditorSection(node: SpiderGraphNode) -> some View {

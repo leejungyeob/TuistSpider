@@ -260,9 +260,9 @@ enum GraphDirection: String, CaseIterable, Identifiable, Sendable {
         case .both:
             return "양방향"
         case .dependencies:
-            return "의존하는 쪽"
+            return "내가 의존하는 쪽"
         case .dependents:
-            return "의존받는 쪽"
+            return "나에게 의존하는 쪽"
         }
     }
 }
@@ -338,13 +338,13 @@ enum SpiderGraphRelationshipDirection: Sendable {
     var badgeText: String {
         switch self {
         case .focusedDependsOnSelection:
-            return "기준 -> 선택"
+            return "기준이 선택에 의존"
         case .selectionDependsOnFocused:
-            return "기준 <- 선택"
+            return "선택이 기준에 의존"
         case .bidirectional:
-            return "기준 <-> 선택"
+            return "서로 의존"
         case .mixed:
-            return "혼합 경로"
+            return "공통 의존 경로"
         }
     }
 
@@ -357,7 +357,7 @@ enum SpiderGraphRelationshipDirection: Sendable {
         case .bidirectional:
             return "\(focusedName)과 \(selectedName) 사이에 순환 의존이 있습니다."
         case .mixed:
-            return "단일 방향으로 이어진 경로가 아니라 공통 의존/역의존이 섞인 연결입니다."
+            return "한쪽이 다른 한쪽에 바로 이어지는 형태가 아니라 공통 의존 관계를 경유한 연결입니다."
         }
     }
 }
@@ -1185,13 +1185,13 @@ enum SpiderGraphConnectionPathKind: String, Hashable, Sendable {
     var badgeText: String {
         switch self {
         case .directedForward:
-            return "직접 경로"
+            return "기준 -> 선택"
         case .directedReverse:
-            return "역방향 경로"
+            return "선택 -> 기준"
         case .commonDependency:
-            return "공통 의존성"
+            return "같이 의존"
         case .commonDependent:
-            return "공통 역의존성"
+            return "둘 다에 의존"
         }
     }
 }
@@ -1209,6 +1209,28 @@ struct SpiderGraphConnectionPath: Identifiable, Hashable, Sendable {
 
     var edgeCount: Int {
         edgeIDs.count
+    }
+
+    var dependencyScopeLabel: String {
+        switch kind {
+        case .directedForward:
+            return edgeCount == 1 ? "직접 의존" : "간접 의존"
+        case .directedReverse:
+            return edgeCount == 1 ? "나에게 직접 의존" : "나에게 간접 의존"
+        case .commonDependency:
+            return "같이 의존하는 모듈 경유"
+        case .commonDependent:
+            return "둘 다에 의존하는 모듈 경유"
+        }
+    }
+
+    var isDirectConnection: Bool {
+        switch kind {
+        case .directedForward, .directedReverse:
+            return edgeCount == 1
+        case .commonDependency, .commonDependent:
+            return false
+        }
     }
 
     var nodeIDs: [String] {
@@ -1286,6 +1308,36 @@ struct SpiderGraphConnectionPath: Identifiable, Hashable, Sendable {
             return left + leadingConnector + "..."
         }
         return left + leadingConnector + "..." + bridgeConnector + "..." + trailingConnector + right
+    }
+}
+
+enum SpiderGraphConnectionPathFilter: String, CaseIterable, Identifiable, Sendable {
+    case all
+    case directOnly
+    case indirectOnly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all:
+            return "전체"
+        case .directOnly:
+            return "직접만"
+        case .indirectOnly:
+            return "간접만"
+        }
+    }
+
+    func includes(_ path: SpiderGraphConnectionPath) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .directOnly:
+            return path.isDirectConnection
+        case .indirectOnly:
+            return !path.isDirectConnection
+        }
     }
 }
 
