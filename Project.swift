@@ -8,8 +8,8 @@ let project = Project(
             "CODE_SIGNING_ALLOWED": "NO",
             "CODE_SIGNING_REQUIRED": "NO",
             "CODE_SIGN_IDENTITY": "",
-            "CURRENT_PROJECT_VERSION": "3",
-            "MARKETING_VERSION": "1.1.1",
+            "CURRENT_PROJECT_VERSION": "4",
+            "MARKETING_VERSION": "1.2.0",
         ]
     ),
     targets: [
@@ -20,8 +20,8 @@ let project = Project(
             bundleId: "com.leejungyeob.TuistSpider",
             infoPlist: .extendingDefault(
                 with: [
-                    "CFBundleShortVersionString": "1.1.1",
-                    "CFBundleVersion": "3",
+                    "CFBundleShortVersionString": "1.2.0",
+                    "CFBundleVersion": "4",
                     "LSApplicationCategoryType": "public.app-category.developer-tools",
                 ]
             ),
