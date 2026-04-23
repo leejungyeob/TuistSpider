@@ -46,6 +46,15 @@ struct ContentView: View {
                 message: Text(error.errorDescription ?? "알 수 없는 오류입니다.")
             )
         }
+        .alert(item: $viewModel.newModuleAlert) { alert in
+            Alert(
+                title: Text("새 모듈 \(alert.count)개 발견"),
+                message: Text(alert.message),
+                dismissButton: .default(Text("확인")) {
+                    viewModel.dismissNewModuleAlert()
+                }
+            )
+        }
         .task {
             await viewModel.checkForUpdatesIfNeeded()
         }
@@ -275,7 +284,12 @@ struct ContentView: View {
                         Text(node.kindLabel.uppercased())
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        LayerBadge(layerName: node.primaryLayer)
+                        HStack(spacing: 8) {
+                            LayerBadge(layerName: node.layerColorKey)
+                            if node.isNewlyDiscovered {
+                                StatusPill(title: "Pending Review", tint: .orange)
+                            }
+                        }
                         Text(node.projectPath ?? "External dependency")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -435,7 +449,7 @@ struct ContentView: View {
                                     Text(node.projectLabel)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                    LayerBadge(layerName: node.primaryLayer, font: .caption2)
+                                    LayerBadge(layerName: node.layerColorKey, font: .caption2)
                                 }
                             }
                             Spacer()
@@ -661,8 +675,8 @@ struct ContentView: View {
             onApplyCustomLayer: { layerName in
                 viewModel.applyLayerClassification(for: node.id, layerName: layerName)
             },
-            onResetToSuggested: {
-                viewModel.resetLayerClassificationToSuggested(for: node.id)
+            onApplySuggested: {
+                viewModel.applySuggestedLayerClassification(for: node.id)
             }
         )
         .id(node.id)
@@ -677,7 +691,7 @@ struct ContentView: View {
             metadataRow(title: "Applied Source", value: node.layerSourceLabel ?? "-")
             metadataRow(title: "Suggested Layer", value: node.suggestedLayerLabel)
             metadataRow(title: "Suggested Source", value: node.suggestedLayerSourceLabel ?? "-")
-            metadataRow(title: "Classification", value: node.hasSavedLayerOverride ? "Saved Override" : "Suggested Value")
+            metadataRow(title: "Classification", value: node.classificationLabel)
             metadataRow(title: "Kind", value: node.kindLabel)
             metadataRow(title: "Project", value: node.projectLabel)
             metadataRow(title: "Bundle ID", value: node.bundleId ?? "-")
@@ -705,8 +719,10 @@ struct ContentView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 6) {
-                    LayerBadge(layerName: node.primaryLayer)
-                    if node.hasSavedLayerOverride {
+                    LayerBadge(layerName: node.layerColorKey)
+                    if node.isNewlyDiscovered {
+                        StatusPill(title: "Pending Review", tint: .orange)
+                    } else if node.hasSavedLayerOverride {
                         StatusPill(title: "Saved Override", tint: .accentColor)
                     }
                 }
@@ -778,7 +794,7 @@ struct ContentView: View {
                             Text(node.projectLabel)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            LayerBadge(layerName: node.primaryLayer, font: .caption2)
+                            LayerBadge(layerName: node.layerColorKey, font: .caption2)
                         }
                     }
                     Spacer()
@@ -824,7 +840,7 @@ private struct LayerEditorSection: View {
     let availableLayers: [String]
     let onSelectLayer: (String?) -> Void
     let onApplyCustomLayer: (String) -> Void
-    let onResetToSuggested: () -> Void
+    let onApplySuggested: () -> Void
 
     @State private var customLayerName = ""
 
@@ -834,17 +850,21 @@ private struct LayerEditorSection: View {
                 Text("레이어/태그 편집")
                     .font(.headline)
                 Spacer()
-                if node.hasSavedLayerOverride {
+                if node.isNewlyDiscovered {
+                    StatusPill(title: "Pending Review", tint: .orange)
+                } else if node.hasSavedLayerOverride {
                     StatusPill(title: "Saved Override", tint: .accentColor)
                 }
             }
 
-            Text("적용값은 프로젝트 스냅샷에 저장되고, 자동 제안값과 다르면 override로 유지됩니다.")
+            Text(node.isNewlyDiscovered
+                 ? "신규 모듈은 자동 추천값을 바로 저장하지 않고 `New Modules`로 임시 분리합니다."
+                 : "적용값은 프로젝트 스냅샷에 저장되고, 자동 제안값과 다르면 override로 유지됩니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
-                StatusPill(title: "Applied · \(node.layerLabel)", tint: LayerColorPalette.color(for: node.primaryLayer))
+                StatusPill(title: "Applied · \(node.layerLabel)", tint: LayerColorPalette.color(for: node.layerColorKey))
                 StatusPill(title: "Suggested · \(node.suggestedLayerLabel)", tint: LayerColorPalette.color(for: node.suggestedLayer))
             }
 
@@ -862,6 +882,12 @@ private struct LayerEditorSection: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.accentColor.opacity(0.16), lineWidth: 1)
             )
+
+            if node.isNewlyDiscovered {
+                Text("메뉴에서 레이어를 고르거나 `Apply Suggested`로 현재 추천값을 바로 확정할 수 있습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             HStack(spacing: 8) {
                 ProminentInputField(
@@ -887,11 +913,11 @@ private struct LayerEditorSection: View {
             )
 
             HStack(spacing: 8) {
-                Button("Reset to Suggested") {
-                    onResetToSuggested()
+                Button(node.isNewlyDiscovered ? "Apply Suggested" : "Reset to Suggested") {
+                    onApplySuggested()
                 }
                 .buttonStyle(.bordered)
-                .disabled(!node.hasSavedLayerOverride)
+                .disabled(!node.isNewlyDiscovered && !node.hasSavedLayerOverride)
 
                 Text("자동 제안: \(node.suggestedLayerLabel)")
                     .font(.caption)
@@ -1068,7 +1094,7 @@ private struct RelatedNodeSearchResults: View {
                         Text(node.projectLabel)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        LayerBadge(layerName: node.primaryLayer, font: .caption2)
+                        LayerBadge(layerName: node.layerColorKey, font: .caption2)
                     }
                 }
                 Spacer()
@@ -1096,7 +1122,7 @@ private struct SidebarNodeRow: View {
                     Text(node.projectLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    LayerBadge(layerName: node.primaryLayer, font: .caption2)
+                    LayerBadge(layerName: node.layerColorKey, font: .caption2)
                 }
             }
             Spacer()

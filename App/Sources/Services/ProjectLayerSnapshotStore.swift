@@ -15,6 +15,12 @@ enum ProjectLayerSnapshotStore {
     static let directoryName = ".tuist-spider"
     static let fileName = "layers.json"
 
+    struct ReconciliationResult {
+        let graph: SpiderGraph
+        let newlyDiscoveredNodes: [SpiderGraphNode]
+        let hasExistingSnapshot: Bool
+    }
+
     static func snapshotFileURL(rootURL: URL) -> URL {
         rootURL
             .appendingPathComponent(directoryName, isDirectory: true)
@@ -37,24 +43,47 @@ enum ProjectLayerSnapshotStore {
         return snapshot.normalized()
     }
 
-    static func apply(_ snapshot: ProjectLayerSnapshot, to graph: SpiderGraph, rootURL: URL) -> SpiderGraph {
-        let entriesByKey = Dictionary(uniqueKeysWithValues: snapshot.targets.map { ($0.key, $0) })
-        let updatedNodes = graph.nodes.map { node in
-            guard
-                let key = snapshotKey(for: node, rootURL: rootURL),
-                let entry = entriesByKey[key]
-            else {
-                return node
-            }
-
-            return node.updatingClassification(
-                primaryLayer: normalizedLayerName(entry.layer),
-                layerSource: .projectSnapshot,
-                hasPersistedClassification: true
+    static func reconcile(
+        _ graph: SpiderGraph,
+        with snapshot: ProjectLayerSnapshot?,
+        rootURL: URL
+    ) -> ReconciliationResult {
+        guard let snapshot else {
+            return ReconciliationResult(
+                graph: graph,
+                newlyDiscoveredNodes: [],
+                hasExistingSnapshot: false
             )
         }
 
-        return graph.replacingNodes(updatedNodes)
+        let entriesByKey = Dictionary(uniqueKeysWithValues: snapshot.targets.map { ($0.key, $0) })
+        let updatedNodes = graph.nodes.map { node in
+            guard let key = snapshotKey(for: node, rootURL: rootURL) else {
+                return node
+            }
+
+            if let entry = entriesByKey[key] {
+                return node.updatingClassification(
+                    primaryLayer: normalizedLayerName(entry.layer),
+                    layerSource: .projectSnapshot,
+                    hasPersistedClassification: true
+                )
+            }
+
+            return node.updatingClassification(
+                primaryLayer: nil,
+                layerSource: nil,
+                hasPersistedClassification: false,
+                isNewlyDiscovered: true
+            )
+        }
+
+        let reconciledGraph = graph.replacingNodes(updatedNodes)
+        return ReconciliationResult(
+            graph: reconciledGraph,
+            newlyDiscoveredNodes: reconciledGraph.nodes.filter(\.isNewlyDiscovered),
+            hasExistingSnapshot: true
+        )
     }
 
     @discardableResult
@@ -78,6 +107,7 @@ enum ProjectLayerSnapshotStore {
 
     private static func makeSnapshot(for graph: SpiderGraph, rootURL: URL) -> ProjectLayerSnapshot {
         let targets = graph.nodes.compactMap { node -> ProjectLayerSnapshot.TargetEntry? in
+            guard !node.isNewlyDiscovered else { return nil }
             guard let key = snapshotKey(for: node, rootURL: rootURL) else { return nil }
             return ProjectLayerSnapshot.TargetEntry(
                 projectPath: key.projectPath,

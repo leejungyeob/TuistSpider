@@ -26,6 +26,7 @@ Most questions about a large dependency graph are not "show me everything."
 - Focus one module and filter by direction and depth
 - Auto-classify project layers from `metadata.tags`, project path, target name, and product hints
 - Persist per-project layer decisions in `.tuist-spider/layers.json`
+- Split targets missing from an existing snapshot into a temporary `New Modules` bucket and notify you with a modal
 - Edit the applied layer for internal targets from the inspector without touching Tuist manifests
 - See read-only `metadata.tags`, applied layer, suggested layer, and classification source together
 - Toggle third-party dependencies on or off
@@ -151,6 +152,7 @@ Build a release ZIP:
 - Change the applied layer from the inspector
 - Add a custom layer name when the inferred or tagged result is not what you want
 - Use `Reset to Suggested` to go back to the current automatic classification
+- Review snapshot-missing targets as `Pending Review` and accept the current recommendation with `Apply Suggested`
 
 ### 5. Persist layer decisions
 
@@ -161,7 +163,9 @@ Build a release ZIP:
 ```
 
 - The saved value is applied first when you reload the same project or graph
-- New targets are auto-classified and synced into the snapshot file
+- If the snapshot file does not exist yet, TuistSpider seeds it from the current automatic classification
+- If a snapshot already exists, only saved targets are applied first and newly discovered targets move into `New Modules`
+- Targets in `New Modules` stay out of the snapshot until you explicitly accept or edit their layer
 - Deleted targets are pruned from the snapshot automatically
 - External dependencies are not persisted in the snapshot
 
@@ -225,6 +229,7 @@ Notes:
 - `layer:<name>` is the only metadata tag syntax treated as a layer source
 - Other metadata tags stay visible as read-only tags in the inspector
 - If multiple `layer:` tags exist, the first one is used and a warning is shown
+- When a snapshot already exists, internal targets missing from it are shown as `New Modules` and keep their inferred value only as `Suggested Layer`
 
 ## External Dependency Detection
 

@@ -30,6 +30,20 @@ final class SpiderGraphLayerFilterTests: XCTestCase {
         XCTAssertEqual(Set(subgraph.nodes.map(\.id)), ["unclassified"])
     }
 
+    func testNewModulesFilterKeepsOnlyPendingInternalNodes() {
+        let graph = makeGraph()
+
+        let subgraph = graph.subgraph(
+            centeredOn: "new-module",
+            direction: .both,
+            depth: .all,
+            includeExternal: true,
+            layerFilter: .newModules
+        )
+
+        XCTAssertEqual(Set(subgraph.nodes.map(\.id)), ["new-module"])
+    }
+
     func testDirectDependenciesRespectLayerFilter() {
         let graph = makeGraph()
 
@@ -98,6 +112,26 @@ final class SpiderGraphLayerFilterTests: XCTestCase {
                     metadataTags: []
                 ),
                 SpiderGraphNode(
+                    id: "new-module",
+                    name: "PaymentsFeature",
+                    displayName: "PaymentsFeature",
+                    kind: "target",
+                    product: "framework",
+                    bundleId: nil,
+                    projectName: "App",
+                    projectPath: "/repo/App",
+                    isExternal: false,
+                    sourceCount: 1,
+                    resourceCount: 0,
+                    primaryLayer: nil,
+                    layerSource: nil,
+                    metadataTags: [],
+                    suggestedLayer: "feature",
+                    suggestedLayerSource: .inferredName,
+                    hasPersistedClassification: false,
+                    isNewlyDiscovered: true
+                ),
+                SpiderGraphNode(
                     id: "package",
                     name: "NetworkingKit",
                     displayName: "NetworkingKit",
@@ -118,6 +152,7 @@ final class SpiderGraphLayerFilterTests: XCTestCase {
                 SpiderGraphEdge(from: "feature", to: "core", kind: "target", status: nil),
                 SpiderGraphEdge(from: "feature", to: "package", kind: "package", status: nil),
                 SpiderGraphEdge(from: "unclassified", to: "feature", kind: "target", status: nil),
+                SpiderGraphEdge(from: "new-module", to: "feature", kind: "target", status: nil),
                 SpiderGraphEdge(from: "unclassified", to: "package", kind: "package", status: nil),
             ]
         )

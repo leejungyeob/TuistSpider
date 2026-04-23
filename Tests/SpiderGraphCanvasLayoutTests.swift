@@ -29,14 +29,16 @@ final class SpiderGraphCanvasLayoutTests: XCTestCase {
         XCTAssertTrue(featureRegion.frame.contains(featureBFrame))
     }
 
-    func testCanvasLayoutAddsUnclassifiedAndExternalBands() {
+    func testCanvasLayoutAddsNewModulesUnclassifiedAndExternalBands() {
         let nodes = [
             makeNode(id: "feature", name: "Feature", layer: "feature"),
+            makeNode(id: "new-module", name: "PaymentsFeature", layer: nil, isNewlyDiscovered: true),
             makeNode(id: "legacy", name: "Legacy", layer: nil),
             makeNode(id: "package", name: "Alamofire", layer: nil, isExternal: true, kind: "package"),
         ]
         let levels = [
             "feature": 0,
+            "new-module": 0,
             "legacy": 0,
             "package": 1,
         ]
@@ -45,7 +47,7 @@ final class SpiderGraphCanvasLayoutTests: XCTestCase {
 
         XCTAssertEqual(
             layout.layerRegions.map(\.kind),
-            [.layer("feature"), .unclassified, .external]
+            [.layer("feature"), .newModules, .unclassified, .external]
         )
     }
 
@@ -79,6 +81,7 @@ final class SpiderGraphCanvasLayoutTests: XCTestCase {
         id: String,
         name: String,
         layer: String?,
+        isNewlyDiscovered: Bool = false,
         isExternal: Bool = false,
         kind: String = "target"
     ) -> SpiderGraphNode {
@@ -96,7 +99,8 @@ final class SpiderGraphCanvasLayoutTests: XCTestCase {
             resourceCount: 0,
             primaryLayer: layer,
             layerSource: layer == nil ? nil : .metadataTag,
-            metadataTags: []
+            metadataTags: [],
+            isNewlyDiscovered: isNewlyDiscovered
         )
     }
 }

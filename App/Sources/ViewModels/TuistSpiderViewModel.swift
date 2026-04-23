@@ -15,6 +15,31 @@ struct SpiderGraphLayerFilterOption: Identifiable, Hashable, Sendable {
     var id: String { filter.id }
 }
 
+struct NewModuleAlertContext: Identifiable, Equatable, Sendable {
+    let moduleNames: [String]
+
+    var id: String {
+        moduleNames.joined(separator: "|")
+    }
+
+    var count: Int {
+        moduleNames.count
+    }
+
+    var message: String {
+        let preview = moduleNames.prefix(5).joined(separator: ", ")
+        if count > 5 {
+            return "\(preview) 외 \(count - 5)개 모듈이 기존 스냅샷에 없어 `New Modules`로 임시 분리되었습니다."
+        }
+        return "\(preview) 모듈이 기존 스냅샷에 없어 `New Modules`로 임시 분리되었습니다."
+    }
+}
+
+private struct PreparedPresentationGraph {
+    let graph: SpiderGraph
+    let newlyDiscoveredNodes: [SpiderGraphNode]
+}
+
 @MainActor
 final class TuistSpiderViewModel: ObservableObject {
     static let defaultZoomScale = 1.0
@@ -24,6 +49,7 @@ final class TuistSpiderViewModel: ObservableObject {
     static let connectionPathLimitStep = 12
     static let connectionPathExtraHops = 3
     static let unclassifiedLayerTitle = "Unclassified"
+    static let newModulesLayerTitle = SpiderGraphNode.newModulesLayerTitle
     static let automaticUpdateCheckInterval: TimeInterval = 60 * 60 * 12
 
     @Published private(set) var graph = SampleGraph.make()
@@ -119,6 +145,7 @@ final class TuistSpiderViewModel: ObservableObject {
     @Published private(set) var currentJSONURL: URL?
     @Published private(set) var viewportCenterRequestID = 0
     @Published var presentedError: SpiderGraphImportError?
+    @Published var newModuleAlert: NewModuleAlertContext?
     @Published private(set) var availableAppUpdate: AppUpdateRelease?
     @Published private(set) var isCheckingForUpdates = false
     @Published private(set) var visibleSubgraph = SpiderGraphSubgraph.empty
@@ -172,11 +199,15 @@ final class TuistSpiderViewModel: ObservableObject {
 
     var layerFilterOptions: [SpiderGraphLayerFilterOption] {
         let internalNodes = graph.nodes.filter { !$0.isExternal }
-        let unclassifiedCount = internalNodes.filter { $0.primaryLayer == nil }.count
+        let newModulesCount = internalNodes.filter(\.isNewlyDiscovered).count
+        let unclassifiedCount = internalNodes.filter { !$0.isNewlyDiscovered && $0.primaryLayer == nil }.count
         var options = [SpiderGraphLayerFilterOption(filter: .all, count: internalNodes.count)]
         options.append(contentsOf: layerCatalog.map { entry in
             SpiderGraphLayerFilterOption(filter: .layer(entry.name), count: entry.nodeCount)
         })
+        if newModulesCount > 0 {
+            options.append(SpiderGraphLayerFilterOption(filter: .newModules, count: newModulesCount))
+        }
         if unclassifiedCount > 0 {
             options.append(SpiderGraphLayerFilterOption(filter: .unclassified, count: unclassifiedCount))
         }
@@ -373,6 +404,7 @@ final class TuistSpiderViewModel: ObservableObject {
         apply(graph: SampleGraph.make(), resetViewport: true)
         currentProjectURL = nil
         currentJSONURL = nil
+        newModuleAlert = nil
         sourceLabel = "Sample graph / normalized-sample"
         statusMessage = loadStatusMessage(base: "샘플 그래프를 불러왔습니다.", for: graph)
     }
@@ -562,6 +594,7 @@ final class TuistSpiderViewModel: ObservableObject {
         do {
             try ProjectLayerSnapshotStore.syncSnapshot(for: updatedGraph, rootURL: rootURL)
             applyUpdatedGraph(updatedGraph)
+            refreshNewModuleAlert(for: updatedGraph, shouldPresent: false)
             statusMessage = "레이어 분류를 저장했습니다."
         } catch {
             presentedError = .processFailed("레이어 분류를 저장하지 못했습니다. \(error.localizedDescription)")
@@ -569,9 +602,13 @@ final class TuistSpiderViewModel: ObservableObject {
         }
     }
 
-    func resetLayerClassificationToSuggested(for nodeID: String) {
+    func applySuggestedLayerClassification(for nodeID: String) {
         guard let node = graph.nodeMap[nodeID] else { return }
         applyLayerClassification(for: nodeID, layerName: node.suggestedLayer)
+    }
+
+    func dismissNewModuleAlert() {
+        newModuleAlert = nil
     }
 
     func handlePNGExportSuccess(fileURL: URL) {
@@ -619,22 +656,26 @@ final class TuistSpiderViewModel: ObservableObject {
                     try service.loadFromProject(at: targetURL)
                 }.value
 
-                let resolvedGraph = prepareGraphForPresentation(
+                let preparedPresentation = prepareGraphForPresentation(
                     graph,
                     projectURL: targetURL,
                     jsonURL: nil
                 )
+                let resolvedGraph = preparedPresentation.graph
                 apply(graph: resolvedGraph, resetViewport: true)
                 currentProjectURL = targetURL
                 currentJSONURL = nil
+                refreshNewModuleAlert(for: resolvedGraph, shouldPresent: true)
                 sourceLabel = "Tuist project / \(resolvedGraph.sourceFormat)"
                 statusMessage = loadStatusMessage(base: "프로젝트 그래프를 불러왔습니다.", for: resolvedGraph)
                 preferences.set(targetURL.path, forKey: PreferencesKey.lastProjectPath.rawValue)
             } catch let error as SpiderGraphImportError {
                 presentedError = error
+                newModuleAlert = nil
                 statusMessage = error.errorDescription ?? "그래프 생성에 실패했습니다."
             } catch {
                 presentedError = .processFailed(error.localizedDescription)
+                newModuleAlert = nil
                 statusMessage = error.localizedDescription
             }
             isLoading = false
@@ -653,21 +694,25 @@ final class TuistSpiderViewModel: ObservableObject {
                     try service.loadFromJSONFile(at: targetURL)
                 }.value
 
-                let resolvedGraph = prepareGraphForPresentation(
+                let preparedPresentation = prepareGraphForPresentation(
                     graph,
                     projectURL: nil,
                     jsonURL: targetURL
                 )
+                let resolvedGraph = preparedPresentation.graph
                 apply(graph: resolvedGraph, resetViewport: true)
                 currentProjectURL = nil
                 currentJSONURL = targetURL
+                refreshNewModuleAlert(for: resolvedGraph, shouldPresent: true)
                 sourceLabel = "JSON file / \(resolvedGraph.sourceFormat)"
                 statusMessage = loadStatusMessage(base: "JSON 그래프를 불러왔습니다.", for: resolvedGraph)
             } catch let error as SpiderGraphImportError {
                 presentedError = error
+                newModuleAlert = nil
                 statusMessage = error.errorDescription ?? "그래프 로드에 실패했습니다."
             } catch {
                 presentedError = .processFailed(error.localizedDescription)
+                newModuleAlert = nil
                 statusMessage = error.localizedDescription
             }
             isLoading = false
@@ -704,19 +749,21 @@ final class TuistSpiderViewModel: ObservableObject {
         _ graph: SpiderGraph,
         projectURL: URL?,
         jsonURL: URL?
-    ) -> SpiderGraph {
+    ) -> PreparedPresentationGraph {
         guard let rootURL = snapshotRootURL(for: graph, projectURL: projectURL, jsonURL: jsonURL) else {
-            return graph
+            return PreparedPresentationGraph(graph: graph, newlyDiscoveredNodes: [])
         }
 
         var preparedGraph = graph
         var warnings: [String] = []
         var didFailLoadingSnapshot = false
+        var newlyDiscoveredNodes: [SpiderGraphNode] = []
 
         do {
-            if let snapshot = try ProjectLayerSnapshotStore.load(rootURL: rootURL) {
-                preparedGraph = ProjectLayerSnapshotStore.apply(snapshot, to: preparedGraph, rootURL: rootURL)
-            }
+            let snapshot = try ProjectLayerSnapshotStore.load(rootURL: rootURL)
+            let reconciliation = ProjectLayerSnapshotStore.reconcile(preparedGraph, with: snapshot, rootURL: rootURL)
+            preparedGraph = reconciliation.graph
+            newlyDiscoveredNodes = reconciliation.newlyDiscoveredNodes
         } catch {
             didFailLoadingSnapshot = true
             warnings.append("레이어 스냅샷을 읽지 못해 자동 분류 결과를 사용합니다. \(error.localizedDescription)")
@@ -730,7 +777,10 @@ final class TuistSpiderViewModel: ObservableObject {
             }
         }
 
-        return preparedGraph.appendingWarnings(warnings)
+        return PreparedPresentationGraph(
+            graph: preparedGraph.appendingWarnings(warnings),
+            newlyDiscoveredNodes: newlyDiscoveredNodes
+        )
     }
 
     private func restorePreferences(for graph: SpiderGraph) {
@@ -847,6 +897,22 @@ final class TuistSpiderViewModel: ObservableObject {
         guard let layerName else { return nil }
         let trimmed = layerName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func refreshNewModuleAlert(for graph: SpiderGraph, shouldPresent: Bool) {
+        let pendingNodes = graph.nodes
+            .filter(\.isNewlyDiscovered)
+            .sorted { lhs, rhs in
+                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+
+        guard !pendingNodes.isEmpty else {
+            newModuleAlert = nil
+            return
+        }
+
+        guard shouldPresent else { return }
+        newModuleAlert = NewModuleAlertContext(moduleNames: pendingNodes.map(\.name))
     }
 
     private func performUpdateCheck(userInitiated: Bool, ignoreSkippedVersion: Bool) async {

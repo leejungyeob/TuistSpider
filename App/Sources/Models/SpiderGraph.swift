@@ -29,6 +29,7 @@ enum SpiderGraphLayerSource: String, Hashable, Sendable {
 
 enum SpiderGraphLayerFilter: Hashable, Identifiable, Sendable {
     case all
+    case newModules
     case unclassified
     case layer(String)
 
@@ -36,6 +37,8 @@ enum SpiderGraphLayerFilter: Hashable, Identifiable, Sendable {
         switch persistedValue {
         case "all":
             self = .all
+        case "new-modules":
+            self = .newModules
         case "unclassified":
             self = .unclassified
         default:
@@ -54,6 +57,8 @@ enum SpiderGraphLayerFilter: Hashable, Identifiable, Sendable {
         switch self {
         case .all:
             return "all"
+        case .newModules:
+            return "new-modules"
         case .unclassified:
             return "unclassified"
         case let .layer(name):
@@ -65,6 +70,8 @@ enum SpiderGraphLayerFilter: Hashable, Identifiable, Sendable {
         switch self {
         case .all:
             return "전체"
+        case .newModules:
+            return SpiderGraphNode.newModulesLayerTitle
         case .unclassified:
             return "Unclassified"
         case let .layer(name):
@@ -76,8 +83,10 @@ enum SpiderGraphLayerFilter: Hashable, Identifiable, Sendable {
         switch self {
         case .all:
             return true
+        case .newModules:
+            return !node.isExternal && node.isNewlyDiscovered
         case .unclassified:
-            return !node.isExternal && node.primaryLayer == nil
+            return !node.isExternal && !node.isNewlyDiscovered && node.primaryLayer == nil
         case let .layer(name):
             return !node.isExternal && node.primaryLayer?.localizedCaseInsensitiveCompare(name) == .orderedSame
         }
@@ -102,6 +111,9 @@ struct SpiderGraphNode: Identifiable, Hashable, Sendable {
     let suggestedLayer: String?
     let suggestedLayerSource: SpiderGraphLayerSource?
     let hasPersistedClassification: Bool
+    let isNewlyDiscovered: Bool
+
+    static let newModulesLayerTitle = "New Modules"
 
     init(
         id: String,
@@ -120,7 +132,8 @@ struct SpiderGraphNode: Identifiable, Hashable, Sendable {
         metadataTags: [String],
         suggestedLayer: String? = nil,
         suggestedLayerSource: SpiderGraphLayerSource? = nil,
-        hasPersistedClassification: Bool = false
+        hasPersistedClassification: Bool = false,
+        isNewlyDiscovered: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -139,6 +152,7 @@ struct SpiderGraphNode: Identifiable, Hashable, Sendable {
         self.suggestedLayer = suggestedLayer
         self.suggestedLayerSource = suggestedLayerSource
         self.hasPersistedClassification = hasPersistedClassification
+        self.isNewlyDiscovered = isNewlyDiscovered
     }
 
     var kindLabel: String {
@@ -153,7 +167,17 @@ struct SpiderGraphNode: Identifiable, Hashable, Sendable {
     }
 
     var layerLabel: String {
-        primaryLayer ?? "Unclassified"
+        if isNewlyDiscovered {
+            return Self.newModulesLayerTitle
+        }
+        return primaryLayer ?? "Unclassified"
+    }
+
+    var layerColorKey: String? {
+        if isNewlyDiscovered {
+            return Self.newModulesLayerTitle
+        }
+        return primaryLayer
     }
 
     var layerSourceLabel: String? {
@@ -173,13 +197,22 @@ struct SpiderGraphNode: Identifiable, Hashable, Sendable {
     }
 
     var hasSavedLayerOverride: Bool {
-        primaryLayer != suggestedLayer
+        guard !isNewlyDiscovered else { return false }
+        return primaryLayer != suggestedLayer
+    }
+
+    var classificationLabel: String {
+        if isNewlyDiscovered {
+            return "Pending Review"
+        }
+        return hasSavedLayerOverride ? "Saved Override" : "Suggested Value"
     }
 
     func updatingClassification(
         primaryLayer: String?,
         layerSource: SpiderGraphLayerSource?,
-        hasPersistedClassification: Bool
+        hasPersistedClassification: Bool,
+        isNewlyDiscovered: Bool = false
     ) -> SpiderGraphNode {
         SpiderGraphNode(
             id: id,
@@ -198,7 +231,8 @@ struct SpiderGraphNode: Identifiable, Hashable, Sendable {
             metadataTags: metadataTags,
             suggestedLayer: suggestedLayer,
             suggestedLayerSource: suggestedLayerSource,
-            hasPersistedClassification: hasPersistedClassification
+            hasPersistedClassification: hasPersistedClassification,
+            isNewlyDiscovered: isNewlyDiscovered
         )
     }
 }
@@ -1477,7 +1511,7 @@ struct SpiderGraphCanvasLayout: Sendable {
     private static func canvasLayerKinds(for nodes: [SpiderGraphNode]) -> [SpiderGraphCanvasLayerKind] {
         let internalLayerNames = Set<String>(
             nodes.compactMap { node in
-                guard !node.isExternal else { return nil }
+                guard !node.isExternal, !node.isNewlyDiscovered else { return nil }
                 return node.primaryLayer
             }
         )
@@ -1486,7 +1520,10 @@ struct SpiderGraphCanvasLayout: Sendable {
         }
 
         var kinds: [SpiderGraphCanvasLayerKind] = orderedInternalLayerNames.map(SpiderGraphCanvasLayerKind.layer)
-        if nodes.contains(where: { !$0.isExternal && $0.primaryLayer == nil }) {
+        if nodes.contains(where: { !$0.isExternal && $0.isNewlyDiscovered }) {
+            kinds.append(.newModules)
+        }
+        if nodes.contains(where: { !$0.isExternal && !$0.isNewlyDiscovered && $0.primaryLayer == nil }) {
             kinds.append(SpiderGraphCanvasLayerKind.unclassified)
         }
         if nodes.contains(where: \.isExternal) {
@@ -1500,6 +1537,9 @@ struct SpiderGraphCanvasLayout: Sendable {
         if node.isExternal {
             return .external
         }
+        if node.isNewlyDiscovered {
+            return .newModules
+        }
         if let primaryLayer = node.primaryLayer {
             return .layer(primaryLayer)
         }
@@ -1509,6 +1549,7 @@ struct SpiderGraphCanvasLayout: Sendable {
 
 enum SpiderGraphCanvasLayerKind: Hashable, Sendable {
     case layer(String)
+    case newModules
     case unclassified
     case external
 
@@ -1516,6 +1557,8 @@ enum SpiderGraphCanvasLayerKind: Hashable, Sendable {
         switch self {
         case let .layer(name):
             return "layer:\(name)"
+        case .newModules:
+            return "new-modules"
         case .unclassified:
             return "unclassified"
         case .external:
@@ -1527,6 +1570,8 @@ enum SpiderGraphCanvasLayerKind: Hashable, Sendable {
         switch self {
         case let .layer(name):
             return name
+        case .newModules:
+            return SpiderGraphNode.newModulesLayerTitle
         case .unclassified:
             return "Unclassified"
         case .external:
@@ -1538,6 +1583,8 @@ enum SpiderGraphCanvasLayerKind: Hashable, Sendable {
         switch self {
         case let .layer(name):
             return name
+        case .newModules:
+            return SpiderGraphNode.newModulesLayerTitle
         case .unclassified, .external:
             return nil
         }
