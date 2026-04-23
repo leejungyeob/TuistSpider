@@ -125,7 +125,7 @@ Build a release ZIP:
 ### 2. Narrow the graph
 
 - Pick a focus module in the left sidebar
-- Choose `양방향`, `의존하는 쪽`, or `의존받는 쪽`
+- Choose `양방향`, `내가 의존하는 쪽`, or `나에게 의존하는 쪽`
 - Limit depth if needed
 - Toggle `외부 의존성 포함` when you want third-party modules visible
 
