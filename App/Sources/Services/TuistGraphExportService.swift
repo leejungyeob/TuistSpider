@@ -1,9 +1,15 @@
 import Foundation
 
 struct TuistGraphExportService: Sendable {
+    private let environment: [String: String]
+
+    init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        self.environment = environment
+    }
+
     func loadFromProject(at projectURL: URL) throws -> SpiderGraph {
         let fileManager = FileManager.default
-        let tuistExecutable = try resolveTuistExecutable()
+        let tuistExecutable = try resolveTuistExecutable(for: projectURL)
         let tempDirectory = fileManager.temporaryDirectory.appendingPathComponent("tuist-spider-\(UUID().uuidString)", isDirectory: true)
         let clangCache = URL(fileURLWithPath: "/tmp/clang-modules", isDirectory: true)
         let swiftCache = URL(fileURLWithPath: "/tmp/swift-modules", isDirectory: true)
@@ -27,7 +33,7 @@ struct TuistGraphExportService: Sendable {
         ]
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        process.environment = ProcessInfo.processInfo.environment.merging(
+        process.environment = environment.merging(
             [
                 "PATH": resolvedPathEnvironment(for: tuistExecutable),
                 "TUIST_XDG_STATE_HOME": "/tmp",
@@ -73,14 +79,17 @@ struct TuistGraphExportService: Sendable {
         return try SpiderGraphImporter.load(from: data)
     }
 
-    private func resolveTuistExecutable() throws -> String {
+    func resolveTuistExecutable(for projectURL: URL) throws -> String {
         let fileManager = FileManager.default
-        let environment = ProcessInfo.processInfo.environment
         let homeDirectory = environment["HOME"] ?? NSHomeDirectory()
         var candidates: [String] = []
 
         if let configuredPath = environment["TUIST_EXECUTABLE"]?.trimmingCharacters(in: .whitespacesAndNewlines), !configuredPath.isEmpty {
             candidates.append(configuredPath)
+        }
+
+        if let miseTuist = resolveMiseTuistExecutable(for: projectURL) {
+            candidates.append(miseTuist)
         }
 
         if let path = environment["PATH"] {
@@ -109,9 +118,65 @@ struct TuistGraphExportService: Sendable {
         throw SpiderGraphImportError.processFailed(
             """
             tuist 실행 파일을 찾지 못했습니다.
-            기본 경로(/opt/homebrew/bin/tuist, /usr/local/bin/tuist)를 확인하거나 `TUIST_EXECUTABLE` 환경변수로 직접 지정해주세요.
+            mise 설정, 기본 경로(/opt/homebrew/bin/tuist, /usr/local/bin/tuist)를 확인하거나 `TUIST_EXECUTABLE` 환경변수로 직접 지정해주세요.
             """
         )
+    }
+
+    private func resolveMiseTuistExecutable(for projectURL: URL) -> String? {
+        let fileManager = FileManager.default
+        let homeDirectory = environment["HOME"] ?? NSHomeDirectory()
+        var candidates: [String] = []
+
+        if let path = environment["PATH"] {
+            candidates.append(contentsOf: path.split(separator: ":").map { "\($0)/mise" })
+        }
+
+        candidates.append(contentsOf: [
+            "\(homeDirectory)/.local/bin/mise",
+            "\(homeDirectory)/bin/mise",
+            "/opt/homebrew/bin/mise",
+            "/usr/local/bin/mise",
+        ])
+
+        var seen = Set<String>()
+        for candidate in candidates where seen.insert(candidate).inserted {
+            guard fileManager.isExecutableFile(atPath: candidate),
+                  let tuistPath = runMiseWhichTuist(misePath: candidate, projectURL: projectURL),
+                  fileManager.isExecutableFile(atPath: tuistPath)
+            else {
+                continue
+            }
+
+            return tuistPath
+        }
+
+        return nil
+    }
+
+    private func runMiseWhichTuist(misePath: String, projectURL: URL) -> String? {
+        let process = Process()
+        let outputPipe = Pipe()
+
+        process.executableURL = URL(fileURLWithPath: misePath)
+        process.arguments = ["which", "tuist"]
+        process.currentDirectoryURL = projectURL
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+        process.environment = environment
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+
+        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : path
     }
 
     private func brewOptCandidates(in rootPath: String) -> [String] {
